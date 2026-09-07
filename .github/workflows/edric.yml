@@ -75,6 +75,7 @@ jobs:
       - name: Reject untyped expression operations
         env:
           IDRIC: ${{ github.workspace }}/.tools/Idric/build/exec/idris2
+          IDRIS2_PREFIX: ${{ github.workspace }}/.tools/Idric/bootstrap-build
         run: sh tests/check-type-boundaries.sh
 
       - name: Test native text file I/O
