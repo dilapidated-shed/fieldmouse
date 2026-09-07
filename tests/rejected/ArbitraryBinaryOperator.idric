@@ -1,0 +1,10 @@
+module ArbitraryBinaryOperator
+
+import Fieldmouse
+
+invalid_expression : expression
+invalid_expression =
+  binary_expression
+    "??"
+    (literal_expression undefined_value)
+    (literal_expression undefined_value)

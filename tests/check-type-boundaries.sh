@@ -41,5 +41,8 @@ expect_rejected \
   tests/rejected/ArbitraryOperator.idric \
   "unary_operator"
 expect_rejected \
+  tests/rejected/ArbitraryBinaryOperator.idric \
+  "binary_operator"
+expect_rejected \
   tests/rejected/ArbitraryNativeCall.idric \
   "native_function"
