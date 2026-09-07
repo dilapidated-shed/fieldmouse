@@ -16,7 +16,7 @@ jobs:
           - name: pinned
             ref: 61970be77769f607cca8650bf424c0f0b22ddee7
           - name: current
-            ref: main
+            ref: Idriç
 
     steps:
       - uses: actions/checkout@v4
