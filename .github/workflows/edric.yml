@@ -72,6 +72,11 @@ jobs:
       - name: Run language contract tests
         run: build/exec/fieldmouse-tests
 
+      - name: Reject untyped expression operations
+        env:
+          IDRIC: ${{ github.workspace }}/.tools/Idric/build/exec/idris2
+        run: sh tests/check-type-boundaries.sh
+
       - name: Test native text file I/O
         shell: bash
         run: |
