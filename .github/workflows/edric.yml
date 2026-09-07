@@ -40,7 +40,10 @@ jobs:
             .tools/Idric/.tools
             .tools/Idric/bootstrap-build
             .tools/Idric/build
-          key: edric-${{ runner.os }}-${{ runner.arch }}-${{ steps.edric-revision.outputs.sha }}
+            .tools/Idric/_/.tools
+            .tools/Idric/_/bootstrap-build
+            .tools/Idric/_/build
+          key: edric-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.edric-revision.outputs.sha }}
 
       - name: Bootstrap Edric
         if: steps.edric-cache.outputs.cache-hit != 'true'
@@ -57,7 +60,10 @@ jobs:
             .tools/Idric/.tools
             .tools/Idric/bootstrap-build
             .tools/Idric/build
-          key: edric-${{ runner.os }}-${{ runner.arch }}-${{ steps.edric-revision.outputs.sha }}
+            .tools/Idric/_/.tools
+            .tools/Idric/_/bootstrap-build
+            .tools/Idric/_/build
+          key: edric-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.edric-revision.outputs.sha }}
 
       - name: Add Edric toolchain to PATH
         run: echo "$GITHUB_WORKSPACE/.tools/Idric/.tools/bin" >> "$GITHUB_PATH"
