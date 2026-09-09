@@ -1,0 +1,7 @@
+module ArbitraryOperator
+
+import Fieldmouse
+
+invalid_expression : expression
+invalid_expression =
+  unary_expression "?" (literal_expression undefined_value)

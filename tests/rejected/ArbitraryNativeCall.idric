@@ -1,0 +1,6 @@
+module ArbitraryNativeCall
+
+import Fieldmouse
+
+invalid_expression : expression
+invalid_expression = native_call_expression "spawn" []

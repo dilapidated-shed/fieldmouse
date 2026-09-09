@@ -21,12 +21,42 @@ choice token one_of
   symbol_token String
 
 public export
+choice unary_operator one_of
+  unary_not
+  unary_negate
+  unary_positive
+
+public export
+choice binary_operator one_of
+  binary_or
+  binary_and
+  binary_equal
+  binary_not_equal
+  binary_strict_equal
+  binary_less
+  binary_less_equal
+  binary_greater
+  binary_greater_equal
+  binary_add
+  binary_subtract
+  binary_multiply
+  binary_divide
+  binary_remainder
+
+public export
+choice native_function one_of
+  native_read_text
+  native_write_text
+  native_append_text
+  native_file_exists
+
+public export
 choice expression one_of
   literal_expression value
   variable_expression String
-  native_call_expression String (List expression)
-  unary_expression String expression
-  binary_expression String expression expression
+  native_call_expression native_function (List expression)
+  unary_expression unary_operator expression
+  binary_expression binary_operator expression expression
   assignment_expression String expression
 
 public export
@@ -43,6 +73,80 @@ Environment = List (String, value)
 
 Parser : Type -> Type
 Parser result = List token -> Either String (result, List token)
+
+public export
+unary_operator_text : unary_operator -> String
+unary_operator_text unary_not = "!"
+unary_operator_text unary_negate = "-"
+unary_operator_text unary_positive = "+"
+
+public export
+parse_unary_operator : String -> Maybe unary_operator
+parse_unary_operator "!" = Just unary_not
+parse_unary_operator "-" = Just unary_negate
+parse_unary_operator "+" = Just unary_positive
+parse_unary_operator _ = Nothing
+
+public export
+binary_operator_text : binary_operator -> String
+binary_operator_text binary_or = "||"
+binary_operator_text binary_and = "&&"
+binary_operator_text binary_equal = "="
+binary_operator_text binary_not_equal = "≠"
+binary_operator_text binary_strict_equal = "≟"
+binary_operator_text binary_less = "<"
+binary_operator_text binary_less_equal = "<="
+binary_operator_text binary_greater = ">"
+binary_operator_text binary_greater_equal = ">="
+binary_operator_text binary_add = "+"
+binary_operator_text binary_subtract = "-"
+binary_operator_text binary_multiply = "*"
+binary_operator_text binary_divide = "/"
+binary_operator_text binary_remainder = "%"
+
+all_binary_operators : List binary_operator
+all_binary_operators =
+  [ binary_or
+  , binary_and
+  , binary_equal
+  , binary_not_equal
+  , binary_strict_equal
+  , binary_less
+  , binary_less_equal
+  , binary_greater
+  , binary_greater_equal
+  , binary_add
+  , binary_subtract
+  , binary_multiply
+  , binary_divide
+  , binary_remainder
+  ]
+
+matching_binary_operator : String -> List binary_operator -> Maybe binary_operator
+matching_binary_operator text [] = Nothing
+matching_binary_operator text (operator :: rest) =
+  if text == binary_operator_text operator
+    then Just operator
+    else matching_binary_operator text rest
+
+public export
+parse_binary_operator : String -> Maybe binary_operator
+parse_binary_operator text = matching_binary_operator text all_binary_operators
+
+public export
+native_function_text : native_function -> String
+native_function_text native_read_text = "readText"
+native_function_text native_write_text = "writeText"
+native_function_text native_append_text = "appendText"
+native_function_text native_file_exists = "fileExists"
+
+public export
+parse_native_function : String -> Maybe native_function
+parse_native_function "readText" = Just native_read_text
+parse_native_function "writeText" = Just native_write_text
+parse_native_function "appendText" = Just native_append_text
+parse_native_function "fileExists" = Just native_file_exists
+parse_native_function _ = Nothing
 
 identifier_start : Char -> Bool
 identifier_start character =
@@ -160,18 +264,18 @@ drop_semicolon : List token -> List token
 drop_semicolon (symbol_token ";" :: rest) = rest
 drop_semicolon rest = rest
 
-parse_left_associative : Parser expression -> List String -> Parser expression
+parse_left_associative : Parser expression -> List binary_operator -> Parser expression
 parse_left_associative smaller operators input = do
   (first, rest) <- smaller input
   continue first rest
   where
     continue : expression -> List token -> Either String (expression, List token)
-    continue left (symbol_token operator :: rest) =
-      if elem operator operators
-        then do
+    continue left input@(symbol_token text :: rest) =
+      case matching_binary_operator text operators of
+        Just operator => do
           (right, after) <- smaller rest
           continue (binary_expression operator left right) after
-        else Right (left, symbol_token operator :: rest)
+        Nothing => Right (left, input)
     continue left rest = Right (left, rest)
 
 mutual
@@ -195,30 +299,37 @@ mutual
       _ => Right (left, rest)
 
   parse_or : Parser expression
-  parse_or = parse_left_associative parse_and ["||"]
+  parse_or = parse_left_associative parse_and [binary_or]
 
   parse_and : Parser expression
-  parse_and = parse_left_associative parse_equality ["&&"]
+  parse_and = parse_left_associative parse_equality [binary_and]
 
   parse_equality : Parser expression
-  parse_equality = parse_left_associative parse_comparison ["=", "≠", "≟"]
+  parse_equality =
+    parse_left_associative parse_comparison
+      [binary_equal, binary_not_equal, binary_strict_equal]
 
   parse_comparison : Parser expression
-  parse_comparison = parse_left_associative parse_addition ["<", "<=", ">", ">="]
+  parse_comparison =
+    parse_left_associative parse_addition
+      [binary_less, binary_less_equal, binary_greater, binary_greater_equal]
 
   parse_addition : Parser expression
-  parse_addition = parse_left_associative parse_multiplication ["+", "-"]
+  parse_addition =
+    parse_left_associative parse_multiplication [binary_add, binary_subtract]
 
   parse_multiplication : Parser expression
-  parse_multiplication = parse_left_associative parse_unary ["*", "/", "%"]
+  parse_multiplication =
+    parse_left_associative parse_unary
+      [binary_multiply, binary_divide, binary_remainder]
 
   parse_unary : Parser expression
-  parse_unary input@(symbol_token operator :: rest) =
-    if elem operator ["!", "-", "+"]
-      then do
+  parse_unary input@(symbol_token text :: rest) =
+    case parse_unary_operator text of
+      Just operator => do
         (body, remaining) <- parse_unary rest
         Right (unary_expression operator body, remaining)
-      else parse_primary input
+      Nothing => parse_primary input
   parse_unary input = parse_primary input
 
   parse_primary : Parser expression
@@ -233,11 +344,11 @@ mutual
   parse_primary (word_token "null" :: rest) = Right (literal_expression null_value, rest)
   parse_primary (word_token "undefined" :: rest) = Right (literal_expression undefined_value, rest)
   parse_primary (word_token name :: symbol_token "(" :: rest) =
-    if elem name ["readText", "writeText", "appendText", "fileExists"]
-      then do
+    case parse_native_function name of
+      Just native => do
         (arguments, remaining) <- parse_native_arguments rest
-        Right (native_call_expression name arguments, remaining)
-      else Left ("unsupported native call '" ++ name ++ "'")
+        Right (native_call_expression native arguments, remaining)
+      Nothing => Left ("unsupported native call '" ++ name ++ "'")
     where
       parse_native_arguments : List token -> Either String (List expression, List token)
       parse_native_arguments (symbol_token ")" :: remaining) = Right ([], remaining)
@@ -405,24 +516,27 @@ coercive_equal left (boolean_value right) =
     Left _ => False
 coercive_equal left right = same_value left right
 
-calculate_numeric : String -> Double -> Double -> Either String value
-calculate_numeric "+" left right = Right (number_value (left + right))
-calculate_numeric "-" left right = Right (number_value (left - right))
-calculate_numeric "*" left right = Right (number_value (left * right))
-calculate_numeric "/" left right = Right (number_value (left / right))
-calculate_numeric "%" left right = Left "remainder is not implemented yet"
-calculate_numeric "<" left right = Right (boolean_value (left < right))
-calculate_numeric "<=" left right = Right (boolean_value (left <= right))
-calculate_numeric ">" left right = Right (boolean_value (left > right))
-calculate_numeric ">=" left right = Right (boolean_value (left >= right))
-calculate_numeric operator _ _ = Left ("unsupported numeric operator '" ++ operator ++ "'")
+calculate_numeric : binary_operator -> Double -> Double -> Either String value
+calculate_numeric binary_add left right = Right (number_value (left + right))
+calculate_numeric binary_subtract left right = Right (number_value (left - right))
+calculate_numeric binary_multiply left right = Right (number_value (left * right))
+calculate_numeric binary_divide left right = Right (number_value (left / right))
+calculate_numeric binary_remainder left right = Left "remainder is not implemented yet"
+calculate_numeric binary_less left right = Right (boolean_value (left < right))
+calculate_numeric binary_less_equal left right = Right (boolean_value (left <= right))
+calculate_numeric binary_greater left right = Right (boolean_value (left > right))
+calculate_numeric binary_greater_equal left right = Right (boolean_value (left >= right))
+calculate_numeric operator _ _ =
+  Left
+    ("unsupported numeric operator '" ++
+     binary_operator_text operator ++ "'")
 
-calculate_binary : String -> value -> value -> Either String value
-calculate_binary "+" (string_value left) right = Right (string_value (left ++ render right))
-calculate_binary "+" left (string_value right) = Right (string_value (render left ++ right))
-calculate_binary "=" left right = Right (boolean_value (coercive_equal left right))
-calculate_binary "≠" left right = Right (boolean_value (not (coercive_equal left right)))
-calculate_binary "≟" left right = Right (boolean_value (same_value left right))
+calculate_binary : binary_operator -> value -> value -> Either String value
+calculate_binary binary_add (string_value left) right = Right (string_value (left ++ render right))
+calculate_binary binary_add left (string_value right) = Right (string_value (render left ++ right))
+calculate_binary binary_equal left right = Right (boolean_value (coercive_equal left right))
+calculate_binary binary_not_equal left right = Right (boolean_value (not (coercive_equal left right)))
+calculate_binary binary_strict_equal left right = Right (boolean_value (same_value left right))
 calculate_binary operator left right = do
   left_number <- number_from_value left
   right_number <- number_from_value right
@@ -432,48 +546,46 @@ file_problem : String -> String -> FileError -> String
 file_problem operation path problem =
   operation ++ " '" ++ path ++ "': " ++ show problem
 
-native_arity_problem : String -> Nat -> Nat -> String
-native_arity_problem name expected actual =
-  name ++ ": expected " ++ show expected ++ " argument" ++
+native_arity_problem : native_function -> Nat -> Nat -> String
+native_arity_problem native expected actual =
+  native_function_text native ++ ": expected " ++ show expected ++ " argument" ++
   (if expected == 1 then "" else "s") ++ ", found " ++ show actual
 
-evaluate_native : Environment -> String -> List value -> IO (Either String (value, Environment))
-evaluate_native environment "readText" [string_value path] = do
+evaluate_native : Environment -> native_function -> List value -> IO (Either String (value, Environment))
+evaluate_native environment native_read_text [string_value path] = do
   result <- readFile path
   case result of
     Left problem => pure (Left (file_problem "readText" path problem))
     Right contents => pure (Right (string_value contents, environment))
-evaluate_native environment "readText" [_] =
+evaluate_native environment native_read_text [_] =
   pure (Left "readText: path must be text")
-evaluate_native environment "readText" arguments =
-  pure (Left (native_arity_problem "readText" 1 (length arguments)))
-evaluate_native environment "writeText" [string_value path, string_value contents] = do
+evaluate_native environment native_read_text arguments =
+  pure (Left (native_arity_problem native_read_text 1 (length arguments)))
+evaluate_native environment native_write_text [string_value path, string_value contents] = do
   result <- writeFile path contents
   case result of
     Left problem => pure (Left (file_problem "writeText" path problem))
     Right () => pure (Right (undefined_value, environment))
-evaluate_native environment "writeText" [_, _] =
+evaluate_native environment native_write_text [_, _] =
   pure (Left "writeText: path and contents must be text")
-evaluate_native environment "writeText" arguments =
-  pure (Left (native_arity_problem "writeText" 2 (length arguments)))
-evaluate_native environment "appendText" [string_value path, string_value contents] = do
+evaluate_native environment native_write_text arguments =
+  pure (Left (native_arity_problem native_write_text 2 (length arguments)))
+evaluate_native environment native_append_text [string_value path, string_value contents] = do
   result <- appendFile path contents
   case result of
     Left problem => pure (Left (file_problem "appendText" path problem))
     Right () => pure (Right (undefined_value, environment))
-evaluate_native environment "appendText" [_, _] =
+evaluate_native environment native_append_text [_, _] =
   pure (Left "appendText: path and contents must be text")
-evaluate_native environment "appendText" arguments =
-  pure (Left (native_arity_problem "appendText" 2 (length arguments)))
-evaluate_native environment "fileExists" [string_value path] = do
+evaluate_native environment native_append_text arguments =
+  pure (Left (native_arity_problem native_append_text 2 (length arguments)))
+evaluate_native environment native_file_exists [string_value path] = do
   found <- exists path
   pure (Right (boolean_value found, environment))
-evaluate_native environment "fileExists" [_] =
+evaluate_native environment native_file_exists [_] =
   pure (Left "fileExists: path must be text")
-evaluate_native environment "fileExists" arguments =
-  pure (Left (native_arity_problem "fileExists" 1 (length arguments)))
-evaluate_native _ name _ =
-  pure (Left ("unsupported native call '" ++ name ++ "'"))
+evaluate_native environment native_file_exists arguments =
+  pure (Left (native_arity_problem native_file_exists 1 (length arguments)))
 
 mutual
   evaluate : Environment -> expression -> IO (Either String (value, Environment))
@@ -499,15 +611,14 @@ mutual
       Left problem => pure (Left problem)
       Right (body_value, after_body) =>
         case operator of
-          "!" => pure (Right (boolean_value (not (truthy body_value)), after_body))
-          "-" => case number_from_value body_value of
+          unary_not => pure (Right (boolean_value (not (truthy body_value)), after_body))
+          unary_negate => case number_from_value body_value of
             Left problem => pure (Left problem)
             Right number => pure (Right (number_value (-number), after_body))
-          "+" => case number_from_value body_value of
+          unary_positive => case number_from_value body_value of
             Left problem => pure (Left problem)
             Right number => pure (Right (number_value number, after_body))
-          _ => pure (Left ("unsupported unary operator '" ++ operator ++ "'"))
-  evaluate environment (binary_expression "&&" left right) = do
+  evaluate environment (binary_expression binary_and left right) = do
     result <- evaluate environment left
     case result of
       Left problem => pure (Left problem)
@@ -515,7 +626,7 @@ mutual
         if truthy left_value
           then evaluate after_left right
           else pure (Right (left_value, after_left))
-  evaluate environment (binary_expression "||" left right) = do
+  evaluate environment (binary_expression binary_or left right) = do
     result <- evaluate environment left
     case result of
       Left problem => pure (Left problem)
@@ -632,4 +743,3 @@ run source =
       case result of
         Left problem => pure (Left problem)
         Right (_, output) => pure (Right output)
-

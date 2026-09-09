@@ -56,6 +56,12 @@ build/exec/fieldmouse script
 
 Parse errors, runtime errors, unreadable files, and invalid command lines return a failing process status.
 
+The public expression tree carries parsed unary operators, binary operators,
+and native function names as closed choices. Raw source text becomes one of
+those choices at the parser boundary; arbitrary strings cannot be installed as
+already-parsed operations. `tests/check-type-boundaries.sh` exercises those
+compile-time refusals.
+
 ## Layout
 
 The active code is intentionally flat:
