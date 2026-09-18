@@ -4,6 +4,8 @@ import Fieldmouse
 import System
 import System.File
 
+%default covering
+
 print_output : List String -> IO ()
 print_output [] = pure ()
 print_output (line :: rest) = do
