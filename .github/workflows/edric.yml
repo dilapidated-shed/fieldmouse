@@ -1,60 +1,106 @@
-name: Edric rewrite
+name: Current Idriç compatibility
 
 on:
   push:
     branches: [edric-rewrite]
   pull_request:
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+permissions:
+  contents: read
 
-      - uses: actions/checkout@v4
+jobs:
+  build-current-idric:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact Fieldmouse head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout current Idriç integration branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: isomorphisms/Idric
-          ref: 61970be77769f607cca8650bf424c0f0b22ddee7
+          ref: Idriç
           path: .tools/Idric
 
-      - name: Restore Edric bootstrap cache
+      - name: Record exact compatibility identities
+        id: identity
+        shell: sh
+        run: |
+          set -eu
+          fieldmouse_sha=$(git rev-parse HEAD)
+          idric_sha=$(git -C .tools/Idric rev-parse HEAD)
+          printf 'idric_sha=%s\n' "$idric_sha" >> "$GITHUB_OUTPUT"
+          {
+            printf 'CURRENT_IDRIC_IDENTITY\t1\n'
+            printf 'fieldmouse_sha\t%s\n' "$fieldmouse_sha"
+            printf 'idric_ref\tIdriç\n'
+            printf 'idric_sha\t%s\n' "$idric_sha"
+          } | tee current-idric-identity.tsv
+
+      - name: Restore exact Idriç bootstrap cache
         id: edric-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             .tools/Idric/.tools
             .tools/Idric/bootstrap-build
             .tools/Idric/build
-          key: edric-ubuntu24-x64-61970be77769f607cca8650bf424c0f0b22ddee7
+          key: edric-ubuntu24-x64-${{ steps.identity.outputs.idric_sha }}
 
-      - name: Bootstrap Edric
+      - name: Bootstrap exact resolved Idriç
         if: steps.edric-cache.outputs.cache-hit != 'true'
         working-directory: .tools/Idric
         run: |
           export PATH="$PWD/.tools/bin:$PATH"
           ./edric bootstrap
 
-      - name: Save Edric bootstrap cache
+      - name: Save exact Idriç bootstrap cache
         if: steps.edric-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             .tools/Idric/.tools
             .tools/Idric/bootstrap-build
             .tools/Idric/build
-          key: edric-ubuntu24-x64-61970be77769f607cca8650bf424c0f0b22ddee7
+          key: edric-ubuntu24-x64-${{ steps.identity.outputs.idric_sha }}
 
-      - name: Add Edric toolchain to PATH
+      - name: Add exact Idriç toolchain to PATH
         run: echo "$GITHUB_WORKSPACE/.tools/Idric/.tools/bin" >> "$GITHUB_PATH"
 
-      - name: Compile Fieldmouse
+      - name: Compile Fieldmouse against exact resolved current Idriç
         env:
           IDRIS2_PREFIX: ${{ github.workspace }}/.tools/Idric/bootstrap-build
         run: .tools/Idric/build/exec/idris2 --build fieldmouse.ipkg
 
-      - name: Run interpreter smoke test
+      - name: Run Fieldmouse interpreter smoke test
         run: |
           output=$(build/exec/fieldmouse -e 'var total = 0; var i = 1; while (i <= 4) { total = total + i; i = i + 1; } console.log("sum", total); if (total === 10) console.log("ok");')
           printf '%s\n' "$output"
           test "$output" = "sum 10.0
           ok"
+
+      - name: Record exact current-Idriç compatibility PASS
+        shell: sh
+        run: |
+          set -eu
+          fieldmouse_sha=$(git rev-parse HEAD)
+          idric_sha=$(git -C .tools/Idric rev-parse HEAD)
+          {
+            printf 'CURRENT_IDRIC_COMPATIBILITY\t1\n'
+            printf 'result\tPASS\n'
+            printf 'fieldmouse_sha\t%s\n' "$fieldmouse_sha"
+            printf 'idric_ref\tIdriç\n'
+            printf 'idric_sha\t%s\n' "$idric_sha"
+            printf 'compiler_build\tPASS\n'
+            printf 'runtime_smoke\tPASS\n'
+          } | tee current-idric-compatibility.tsv
+
+      - name: Retain exact compatibility identity and receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fieldmouse-current-idric-${{ github.event.pull_request.head.sha || github.sha }}
+          path: current-idric-*.tsv
+          if-no-files-found: error
