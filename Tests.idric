@@ -11,6 +11,7 @@ fail message = do
 pass : String -> IO ()
 pass name = putStrLn ("ok: " ++ name)
 
+covering
 assert_run : String -> String -> List String -> IO ()
 assert_run name source expected = do
   result <- run source
@@ -21,6 +22,7 @@ assert_run name source expected = do
         then pass name
         else fail (name ++ " — expected " ++ show expected ++ ", found " ++ show actual)
 
+covering
 assert_run_with_host : String -> Host -> String -> List String -> IO ()
 assert_run_with_host name host source expected = do
   result <- run_with_host host source
@@ -31,6 +33,7 @@ assert_run_with_host name host source expected = do
         then pass name
         else fail (name ++ " — expected " ++ show expected ++ ", found " ++ show actual)
 
+covering
 assert_rejected_with_host : String -> Host -> String -> IO ()
 assert_rejected_with_host name host source = do
   result <- run_with_host host source
@@ -50,6 +53,7 @@ memory_host _ = pure (Left "memory host does not implement this request")
 wrong_response_host : Host
 wrong_response_host _ = pure (Right done_response)
 
+covering
 assert_rejected : String -> String -> IO ()
 assert_rejected name source = do
   result <- run source
@@ -57,6 +61,7 @@ assert_rejected name source = do
     Left _ => pass name
     Right output => fail (name ++ " — unexpectedly ran with output " ++ show output)
 
+covering
 main : IO ()
 main = do
   assert_run "multiplication binds before addition"
