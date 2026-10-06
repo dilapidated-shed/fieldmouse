@@ -33,6 +33,14 @@ The Edriç interpreter currently has:
 
 The file calls are deliberately a Field Mouse surface, not a claim of Node compatibility. They operate on paths relative to the current working directory and do not create parent directories. `writeText` truncates or creates a file; `appendText` preserves existing contents or creates a file; both return `undefined`. Failed reads and writes identify the operation and path and return a failing process status.
 
+## Host boundary
+
+Native effects cross an explicit `Host` boundary. The parser still resolves a closed `native_function`; the evaluator checks dynamic Field Mouse arguments and converts them into a closed, typed `host_request`. A host returns a closed `host_response`, which is checked against the request before it becomes a Field Mouse value.
+
+`run_with_host` accepts an injected host implementation. `run` keeps the current command-line behavior by using the built-in file host. This means another environment can implement the same contract without putting Android, Unix, or another operating system into the evaluator.
+
+No arbitrary operation-name string, pointer, or opaque handle crosses this first boundary. It is request/response only; event streams, callbacks, and their lifetimes remain separate work rather than being hidden inside the synchronous call interface.
+
 This is intentionally smaller than ECMAScript and much smaller than Node. Arrays and objects, user-defined functions, property access, `fs`, `path`, `process`, directory operations, and binary buffers remain separate work.
 
 ## Build and test
@@ -66,7 +74,7 @@ compile-time refusals.
 
 The active code is intentionally flat:
 
-- `Fieldmouse.idric` — language model, lexer, parser, and interpreter;
+- `Fieldmouse.idric` — language model, lexer, parser, interpreter, and the first closed host boundary;
 - `Main.idric` — command-line entry point;
 - `Tests.idric` — executable language-contract tests;
 - `fieldmouse.ipkg` and `tests.ipkg` — application and test builds.

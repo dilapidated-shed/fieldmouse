@@ -11,6 +11,7 @@ fail message = do
 pass : String -> IO ()
 pass name = putStrLn ("ok: " ++ name)
 
+covering
 assert_run : String -> String -> List String -> IO ()
 assert_run name source expected = do
   result <- run source
@@ -21,6 +22,38 @@ assert_run name source expected = do
         then pass name
         else fail (name ++ " — expected " ++ show expected ++ ", found " ++ show actual)
 
+covering
+assert_run_with_host : String -> Host -> String -> List String -> IO ()
+assert_run_with_host name host source expected = do
+  result <- run_with_host host source
+  case result of
+    Left problem => fail (name ++ " — " ++ problem)
+    Right actual =>
+      if actual == expected
+        then pass name
+        else fail (name ++ " — expected " ++ show expected ++ ", found " ++ show actual)
+
+covering
+assert_rejected_with_host : String -> Host -> String -> IO ()
+assert_rejected_with_host name host source = do
+  result <- run_with_host host source
+  case result of
+    Left _ => pass name
+    Right output => fail (name ++ " — unexpectedly ran with output " ++ show output)
+
+memory_host : Host
+memory_host (read_text_request path) =
+  if path == "virtual"
+    then pure (Right (text_response "from host"))
+    else pure (Left ("memory host has no '" ++ path ++ "'"))
+memory_host (file_exists_request path) =
+  pure (Right (boolean_response (path == "virtual")))
+memory_host _ = pure (Left "memory host does not implement this request")
+
+wrong_response_host : Host
+wrong_response_host _ = pure (Right done_response)
+
+covering
 assert_rejected : String -> String -> IO ()
 assert_rejected name source = do
   result <- run source
@@ -28,6 +61,7 @@ assert_rejected name source = do
     Left _ => pass name
     Right output => fail (name ++ " — unexpectedly ran with output " ++ show output)
 
+covering
 main : IO ()
 main = do
   assert_run "multiplication binds before addition"
@@ -94,4 +128,13 @@ main = do
   assert_rejected "unterminated strings are lexical errors"
     "console.log(\"missing);"
 
-  putStrLn "18 Field Mouse contract tests passed"
+  assert_run_with_host "native effects go through an injected host"
+    memory_host
+    "console.log(readText(\"virtual\"), fileExists(\"virtual\"));"
+    ["from host true"]
+
+  assert_rejected_with_host "host responses must match their requests"
+    wrong_response_host
+    "console.log(readText(\"virtual\"));"
+
+  putStrLn "20 Field Mouse contract tests passed"

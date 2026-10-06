@@ -51,6 +51,23 @@ choice native_function one_of
   native_file_exists
 
 public export
+choice host_request one_of
+  read_text_request String
+  write_text_request String String
+  append_text_request String String
+  file_exists_request String
+
+public export
+choice host_response one_of
+  text_response String
+  boolean_response Bool
+  done_response
+
+public export
+Host : Type
+Host = host_request -> IO (Either String host_response)
+
+public export
 choice expression one_of
   literal_expression value
   variable_expression String
@@ -551,62 +568,100 @@ native_arity_problem native expected actual =
   native_function_text native ++ ": expected " ++ show expected ++ " argument" ++
   (if expected == 1 then "" else "s") ++ ", found " ++ show actual
 
-evaluate_native : Environment -> native_function -> List value -> IO (Either String (value, Environment))
-evaluate_native environment native_read_text [string_value path] = do
+native_request : native_function -> List value -> Either String host_request
+native_request native_read_text [string_value path] =
+  Right (read_text_request path)
+native_request native_read_text [_] =
+  Left "readText: path must be text"
+native_request native_read_text arguments =
+  Left (native_arity_problem native_read_text 1 (length arguments))
+native_request native_write_text [string_value path, string_value contents] =
+  Right (write_text_request path contents)
+native_request native_write_text [_, _] =
+  Left "writeText: path and contents must be text"
+native_request native_write_text arguments =
+  Left (native_arity_problem native_write_text 2 (length arguments))
+native_request native_append_text [string_value path, string_value contents] =
+  Right (append_text_request path contents)
+native_request native_append_text [_, _] =
+  Left "appendText: path and contents must be text"
+native_request native_append_text arguments =
+  Left (native_arity_problem native_append_text 2 (length arguments))
+native_request native_file_exists [string_value path] =
+  Right (file_exists_request path)
+native_request native_file_exists [_] =
+  Left "fileExists: path must be text"
+native_request native_file_exists arguments =
+  Left (native_arity_problem native_file_exists 1 (length arguments))
+
+host_request_name : host_request -> String
+host_request_name (read_text_request _) = "readText"
+host_request_name (write_text_request _ _) = "writeText"
+host_request_name (append_text_request _ _) = "appendText"
+host_request_name (file_exists_request _) = "fileExists"
+
+host_response_value : host_request -> host_response -> Either String value
+host_response_value (read_text_request _) (text_response contents) =
+  Right (string_value contents)
+host_response_value (write_text_request _ _) done_response =
+  Right undefined_value
+host_response_value (append_text_request _ _) done_response =
+  Right undefined_value
+host_response_value (file_exists_request _) (boolean_response found) =
+  Right (boolean_value found)
+host_response_value request _ =
+  Left ("host returned wrong response for '" ++ host_request_name request ++ "'")
+
+file_host : Host
+file_host (read_text_request path) = do
   result <- readFile path
   case result of
     Left problem => pure (Left (file_problem "readText" path problem))
-    Right contents => pure (Right (string_value contents, environment))
-evaluate_native environment native_read_text [_] =
-  pure (Left "readText: path must be text")
-evaluate_native environment native_read_text arguments =
-  pure (Left (native_arity_problem native_read_text 1 (length arguments)))
-evaluate_native environment native_write_text [string_value path, string_value contents] = do
+    Right contents => pure (Right (text_response contents))
+file_host (write_text_request path contents) = do
   result <- writeFile path contents
   case result of
     Left problem => pure (Left (file_problem "writeText" path problem))
-    Right () => pure (Right (undefined_value, environment))
-evaluate_native environment native_write_text [_, _] =
-  pure (Left "writeText: path and contents must be text")
-evaluate_native environment native_write_text arguments =
-  pure (Left (native_arity_problem native_write_text 2 (length arguments)))
-evaluate_native environment native_append_text [string_value path, string_value contents] = do
+    Right () => pure (Right done_response)
+file_host (append_text_request path contents) = do
   result <- appendFile path contents
   case result of
     Left problem => pure (Left (file_problem "appendText" path problem))
-    Right () => pure (Right (undefined_value, environment))
-evaluate_native environment native_append_text [_, _] =
-  pure (Left "appendText: path and contents must be text")
-evaluate_native environment native_append_text arguments =
-  pure (Left (native_arity_problem native_append_text 2 (length arguments)))
-evaluate_native environment native_file_exists [string_value path] = do
+    Right () => pure (Right done_response)
+file_host (file_exists_request path) = do
   found <- exists path
-  pure (Right (boolean_value found, environment))
-evaluate_native environment native_file_exists [_] =
-  pure (Left "fileExists: path must be text")
-evaluate_native environment native_file_exists arguments =
-  pure (Left (native_arity_problem native_file_exists 1 (length arguments)))
+  pure (Right (boolean_response found))
 
 mutual
-  evaluate : Environment -> expression -> IO (Either String (value, Environment))
-  evaluate environment (literal_expression literal) = pure (Right (literal, environment))
-  evaluate environment (variable_expression name) =
+  evaluate : Host -> Environment -> expression -> IO (Either String (value, Environment))
+  evaluate host environment (literal_expression literal) = pure (Right (literal, environment))
+  evaluate host environment (variable_expression name) =
     case lookup_variable name environment of
       Left problem => pure (Left problem)
       Right found => pure (Right (found, environment))
-  evaluate environment (native_call_expression name arguments) = do
-    result <- evaluate_many environment arguments
+  evaluate host environment (native_call_expression name arguments) = do
+    result <- evaluate_many host environment arguments
     case result of
       Left problem => pure (Left problem)
-      Right (values, after_arguments) => evaluate_native after_arguments name values
-  evaluate environment (assignment_expression name body) = do
-    result <- evaluate environment body
+      Right (values, after_arguments) =>
+        case native_request name values of
+          Left problem => pure (Left problem)
+          Right request => do
+            host_result <- host request
+            case host_result of
+              Left problem => pure (Left problem)
+              Right response =>
+                case host_response_value request response of
+                  Left problem => pure (Left problem)
+                  Right answer => pure (Right (answer, after_arguments))
+  evaluate host environment (assignment_expression name body) = do
+    result <- evaluate host environment body
     case result of
       Left problem => pure (Left problem)
       Right (new_value, after_body) =>
         pure (Right (new_value, set_variable name new_value after_body))
-  evaluate environment (unary_expression operator body) = do
-    result <- evaluate environment body
+  evaluate host environment (unary_expression operator body) = do
+    result <- evaluate host environment body
     case result of
       Left problem => pure (Left problem)
       Right (body_value, after_body) =>
@@ -618,28 +673,28 @@ mutual
           unary_positive => case number_from_value body_value of
             Left problem => pure (Left problem)
             Right number => pure (Right (number_value number, after_body))
-  evaluate environment (binary_expression binary_and left right) = do
-    result <- evaluate environment left
+  evaluate host environment (binary_expression binary_and left right) = do
+    result <- evaluate host environment left
     case result of
       Left problem => pure (Left problem)
       Right (left_value, after_left) =>
         if truthy left_value
-          then evaluate after_left right
+          then evaluate host after_left right
           else pure (Right (left_value, after_left))
-  evaluate environment (binary_expression binary_or left right) = do
-    result <- evaluate environment left
+  evaluate host environment (binary_expression binary_or left right) = do
+    result <- evaluate host environment left
     case result of
       Left problem => pure (Left problem)
       Right (left_value, after_left) =>
         if truthy left_value
           then pure (Right (left_value, after_left))
-          else evaluate after_left right
-  evaluate environment (binary_expression operator left right) = do
-    left_result <- evaluate environment left
+          else evaluate host after_left right
+  evaluate host environment (binary_expression operator left right) = do
+    left_result <- evaluate host environment left
     case left_result of
       Left problem => pure (Left problem)
       Right (left_value, after_left) => do
-        right_result <- evaluate after_left right
+        right_result <- evaluate host after_left right
         case right_result of
           Left problem => pure (Left problem)
           Right (right_value, after_right) =>
@@ -647,43 +702,43 @@ mutual
               Left problem => pure (Left problem)
               Right answer => pure (Right (answer, after_right))
 
-  evaluate_many : Environment -> List expression -> IO (Either String (List value, Environment))
-  evaluate_many environment [] = pure (Right ([], environment))
-  evaluate_many environment (first :: rest) = do
-    first_result <- evaluate environment first
+  evaluate_many : Host -> Environment -> List expression -> IO (Either String (List value, Environment))
+  evaluate_many host environment [] = pure (Right ([], environment))
+  evaluate_many host environment (first :: rest) = do
+    first_result <- evaluate host environment first
     case first_result of
       Left problem => pure (Left problem)
       Right (first_value, after_first) => do
-        later_result <- evaluate_many after_first rest
+        later_result <- evaluate_many host after_first rest
         case later_result of
           Left problem => pure (Left problem)
           Right (later_values, after_later) =>
             pure (Right (first_value :: later_values, after_later))
 
-execute_statement : Environment -> statement -> IO (Either String (Environment, List String))
-execute_statement environment (define_statement name initial) = do
-  result <- evaluate environment initial
+execute_statement : Host -> Environment -> statement -> IO (Either String (Environment, List String))
+execute_statement host environment (define_statement name initial) = do
+  result <- evaluate host environment initial
   case result of
     Left problem => pure (Left problem)
     Right (initial_value, after_initial) =>
       pure (Right (define_variable name initial_value after_initial, []))
-execute_statement environment (expression_statement body) = do
-  result <- evaluate environment body
+execute_statement host environment (expression_statement body) = do
+  result <- evaluate host environment body
   case result of
     Left problem => pure (Left problem)
     Right (_, after_body) => pure (Right (after_body, []))
-execute_statement environment (log_statement arguments) = do
-  result <- evaluate_many environment arguments
+execute_statement host environment (log_statement arguments) = do
+  result <- evaluate_many host environment arguments
   case result of
     Left problem => pure (Left problem)
     Right (values, after_arguments) =>
       pure (Right (after_arguments, [joinBy " " (map render values)]))
-execute_statement environment (block_statement statements) = execute_block environment statements
+execute_statement host environment (block_statement statements) = execute_block environment statements
   where
     execute_block : Environment -> List statement -> IO (Either String (Environment, List String))
     execute_block current [] = pure (Right (current, []))
     execute_block current (first :: rest) = do
-      first_result <- execute_statement current first
+      first_result <- execute_statement host current first
       case first_result of
         Left problem => pure (Left problem)
         Right (after_first, first_output) => do
@@ -692,54 +747,58 @@ execute_statement environment (block_statement statements) = execute_block envir
             Left problem => pure (Left problem)
             Right (after_rest, later_output) =>
               pure (Right (after_rest, first_output ++ later_output))
-execute_statement environment (if_statement condition yes_branch no_branch) = do
-  result <- evaluate environment condition
+execute_statement host environment (if_statement condition yes_branch no_branch) = do
+  result <- evaluate host environment condition
   case result of
     Left problem => pure (Left problem)
     Right (condition_value, after_condition) =>
       if truthy condition_value
-        then execute_statement after_condition yes_branch
+        then execute_statement host after_condition yes_branch
         else case no_branch of
           Nothing => pure (Right (after_condition, []))
-          Just branch => execute_statement after_condition branch
-execute_statement environment loop@(while_statement condition body) = do
-  result <- evaluate environment condition
+          Just branch => execute_statement host after_condition branch
+execute_statement host environment loop@(while_statement condition body) = do
+  result <- evaluate host environment condition
   case result of
     Left problem => pure (Left problem)
     Right (condition_value, after_condition) =>
       if truthy condition_value
         then do
-          body_result <- execute_statement after_condition body
+          body_result <- execute_statement host after_condition body
           case body_result of
             Left problem => pure (Left problem)
             Right (after_body, body_output) => do
-              loop_result <- execute_statement after_body loop
+              loop_result <- execute_statement host after_body loop
               case loop_result of
                 Left problem => pure (Left problem)
                 Right (after_loop, later_output) =>
                   pure (Right (after_loop, body_output ++ later_output))
         else pure (Right (after_condition, []))
 
-execute_statements : Environment -> List statement -> IO (Either String (Environment, List String))
-execute_statements environment [] = pure (Right (environment, []))
-execute_statements environment (first :: rest) = do
-  first_result <- execute_statement environment first
+execute_statements : Host -> Environment -> List statement -> IO (Either String (Environment, List String))
+execute_statements host environment [] = pure (Right (environment, []))
+execute_statements host environment (first :: rest) = do
+  first_result <- execute_statement host environment first
   case first_result of
     Left problem => pure (Left problem)
     Right (after_first, first_output) => do
-      later_result <- execute_statements after_first rest
+      later_result <- execute_statements host after_first rest
       case later_result of
         Left problem => pure (Left problem)
         Right (after_rest, later_output) =>
           pure (Right (after_rest, first_output ++ later_output))
 
 public export
-run : String -> IO (Either String (List String))
-run source =
+run_with_host : Host -> String -> IO (Either String (List String))
+run_with_host host source =
   case parse source of
     Left problem => pure (Left problem)
     Right program => do
-      result <- execute_statements [] program
+      result <- execute_statements host [] program
       case result of
         Left problem => pure (Left problem)
         Right (_, output) => pure (Right output)
+
+public export
+run : String -> IO (Either String (List String))
+run = run_with_host file_host
