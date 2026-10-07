@@ -87,6 +87,8 @@ jobs:
         run: node tests/acceptance.mjs
 
       - name: Measure runtime artifact and dependencies
+        env:
+          FIELDMOUSE_COMPILER_SHA: ${{ steps.edric-revision.outputs.sha }}
         run: node tests/measure.mjs
 
       - name: Reject untyped expression operations

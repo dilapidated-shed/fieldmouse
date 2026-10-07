@@ -89,21 +89,22 @@ requested differential references and external acceptance/measurement checks.
 
 ## Footprint and installation evidence
 
-At the locally measured runtime build:
+At the local runtime build verified on
+`8ffd5c478b74e94ea512ca3ce909609f6125c53b`:
 
 | Component | Bytes |
 | --- | ---: |
-| Compiled Field Mouse payload | 192789 |
+| Compiled Field Mouse payload | 192787 |
 | Generated launcher | 429 |
 | Idriç support shared library | 50624 |
-| Minimal application files | 243842 |
+| Minimal application files | 243840 |
 | Chez executable plus petite/scheme boot files | 4408150 |
-| Application plus declared Chez runtime | 4651992 |
+| Application plus declared Chez runtime | 4651990 |
 | Node reference executable alone, this host | 125989464 |
 
 Payload SHA-256:
-`d79062f3c30b5b8c973095d5a2deafe9bea1b678f9e5b89bbf75fbf4a6bbbe6a`.
-One startup smoke was 55 ms (one local sample, not a benchmark).
+`878603fef54a795990a30da29980ce641f5e61e5839466648c46514837852607`.
+One startup smoke was 66 ms (one local sample, not a benchmark).
 Dynamic dependencies: libc.so.6, libm.so.6, ELF loader, plus the supplied
 libidris2_support.so. Chez/boot files are separate declared runtime files.
 The compiled program is not a standalone single ELF, and its generated
@@ -123,5 +124,23 @@ The next specific host improvement is direct argument-vector subprocess
 lowering, preserving the existing typed request and adversarial literal-argument
 tests. Callback/event lifetimes remain separate architectural work.
 
-Hosted CI must still prove the final published head before a full completion
-claim. Local passing results are not relabeled as hosted evidence.
+## Hosted acceptance receipt
+
+Implementation head: `8ffd5c478b74e94ea512ca3ce909609f6125c53b`.
+[Contract run 37559955757](https://github.com/dilapidated-shed/fieldmouse/actions/runs/37559955757)
+completed successfully in both pinned and current lanes. Both resolved compiler
+source to `ff4d852862a3942592f8ade9afde8d409d9803be`. Checkout used the explicit
+PR head, not the synthetic merge commit. Both lanes built the command/tests and
+passed the 74 contract checks, four refusals, seven Node-reference cases,
+failure/installation checks, retained text-I/O and CLI checks, and measurement.
+
+Pinned job `112594735814` measured payload 192843 bytes, minimal application
+243896 bytes, and application plus Chez runtime 4652037 bytes. Payload SHA-256:
+`c72f6a1f5c64da3826c2907aa75c84b16f33792d2f02f92b69af470a9aaa5978`.
+Its startup smoke passed in 56 ms (one sample). These hosted bytes are distinct
+from the local artifact above; byte-identical compiler output is not claimed.
+
+The measurement receipt now prints source revision, compiler revision, target,
+artifact hash, dependencies and startup result together. Receipt/documentation
+revisions repeat CI on their own exact heads; this receipt remains bound to the
+implementation head it actually tested.

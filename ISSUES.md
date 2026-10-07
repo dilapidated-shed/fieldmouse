@@ -2,7 +2,7 @@
 
 The GitHub issue tracker is disabled; this file records remaining runtime work.
 
-## First useful runtime: implemented, locally verified
+## First useful runtime: implemented and verified
 
 Arrays, objects, nested mutation, ordinary/property calls, functions, parameters,
 return, lexical/local binding cells, closures, and self recursion are implemented
@@ -17,8 +17,9 @@ comparison contract are in `tests/helpers/README.md`.
 
 The old arrays/objects, functions/calls, text-I/O, small build-script surface,
 compiler-drift, and corpus milestones are superseded by this first-runtime
-acceptance gate. This records implementation plus local execution, not an
-unobserved hosted-CI result. The current CI gate executes the full corpus.
+acceptance gate. Local execution and hosted exact-head checks prove the corpus;
+the hosted receipt is in the engineering note. CI repeats the full corpus for
+each supported head with pinned and resolved-current compiler revisions.
 
 ## 1. Cat Food integration follow-up
 
@@ -33,9 +34,9 @@ Inspection at Cat Food `62ac940588f5ee4c5be468d48e38d74514da3757` found:
 
 Required change: follow the accepted master revision, use arrow assignments and
 `≟` in the build smoke, retain the compiled app directory and declared Chez
-runtime, then prove a fresh stable-bin invocation. Do not revive the old
-Cat Food PR #11 or describe it as current integration. No Cat Food rewrite or
-phone-side compiler bootstrap is required by this host runtime drive.
+runtime, then prove a fresh stable-bin invocation. No Cat Food source was changed
+by this drive. No Cat Food rewrite or phone-side compiler bootstrap is required
+by this host runtime drive.
 
 ## 2. Direct subprocess adapter
 
