@@ -1,0 +1,6 @@
+module ArbitraryHostRequest
+
+import Fieldmouse
+
+bad_request : host_request
+bad_request = "arbitrary operation"

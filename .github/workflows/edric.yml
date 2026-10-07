@@ -2,7 +2,7 @@ name: Field Mouse contract
 
 on:
   push:
-    branches: [master]
+    branches: [master, 'runtime/**']
   pull_request:
 
 jobs:
@@ -14,14 +14,16 @@ jobs:
       matrix:
         edric:
           - name: pinned
-            ref: 61970be77769f607cca8650bf424c0f0b22ddee7
+            ref: ff4d852862a3942592f8ade9afde8d409d9803be
           - name: current
             ref: Idriç
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: isomorphisms/Idric
           ref: ${{ matrix.edric.ref }}
@@ -34,7 +36,7 @@ jobs:
 
       - name: Restore Edric bootstrap cache
         id: edric-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             .tools/Idric/.tools
@@ -54,7 +56,7 @@ jobs:
 
       - name: Save Edric bootstrap cache
         if: steps.edric-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             .tools/Idric/.tools
@@ -77,6 +79,17 @@ jobs:
 
       - name: Run language contract tests
         run: build/exec/fieldmouse-tests
+
+      - name: Prove helper tasks against Node and reject failures
+        env:
+          IDRIC: ${{ github.workspace }}/.tools/Idric/build/exec/idris2
+          IDRIS2_PREFIX: ${{ github.workspace }}/.tools/Idric/bootstrap-build
+        run: node tests/acceptance.mjs
+
+      - name: Measure runtime artifact and dependencies
+        env:
+          FIELDMOUSE_COMPILER_SHA: ${{ steps.edric-revision.outputs.sha }}
+        run: node tests/measure.mjs
 
       - name: Reject untyped expression operations
         env:

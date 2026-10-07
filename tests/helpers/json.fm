@@ -1,0 +1,9 @@
+var args ← arguments();
+if (args.length ≠ 1) exit(64);
+var data ← parseJson(readText(args[0]));
+function advance(item) { item.count ← item.count + 1; return item; }
+var i ← 0;
+while (i < data.items.length) { advance(data.items[i]); i ← i + 1; }
+data.build ← {label: environment("FIELDMOUSE_LABEL"), ok: true};
+writeText(args[0], stringifyJson(data));
+console.log("updated");

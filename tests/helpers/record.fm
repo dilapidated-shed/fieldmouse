@@ -1,0 +1,5 @@
+var args ← arguments();
+if (args.length ≠ 3) exit(64);
+var record ← {method: args[0], url: args[1], authorization: environment("FIELDMOUSE_LABEL"), body: readText(args[2])};
+appendText("requests.jsonl", stringifyJson(record) + "\n");
+console.log("recorded");

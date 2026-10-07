@@ -3,6 +3,7 @@ module Main
 import Fieldmouse
 import System
 import System.File
+import Data.String
 
 print_output : List String -> IO ()
 print_output [] = pure ()
@@ -16,26 +17,31 @@ report_failure message = do
   exitFailure
 
 covering
-run_source : String -> IO ()
-run_source source = do
-  result <- run source
+run_source : List String -> String -> IO ()
+run_source arguments source = do
+  result <- run_command arguments source
   case result of
     Left problem => report_failure problem
-    Right output => print_output output
+    Right (output, status) => do
+      print_output output
+      exitWith (cast status)
 
 covering
-run_file : String -> IO ()
-run_file path = do
+run_file : String -> List String -> IO ()
+run_file path arguments = do
   result <- readFile path
   case result of
     Left problem => report_failure ("cannot read " ++ path ++ ": " ++ show problem)
-    Right source => run_source source
+    Right source => run_source arguments source
 
 covering
 main : IO ()
 main = do
   arguments <- getArgs
   case arguments of
-    _ :: "-e" :: source :: [] => run_source source
-    _ :: path :: [] => run_file path
+    _ :: "-e" :: source :: rest => run_source rest source
+    _ :: path :: rest =>
+      if isPrefixOf "-" path
+        then report_failure "usage: fieldmouse [-e source | file] [arguments...]"
+        else run_file path rest
     _ => report_failure "usage: fieldmouse [-e source | file]"

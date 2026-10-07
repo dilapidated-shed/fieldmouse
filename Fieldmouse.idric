@@ -2,16 +2,13 @@ module Fieldmouse
 
 import Data.String
 import System.File
+import System.Directory
+import System
+import Data.List
+import Data.Maybe
+import Data.List1
 
 %default covering
-
-public export
-choice value one_of
-  undefined_value
-  null_value
-  boolean_value Bool
-  number_value Double
-  string_value String
 
 public export
 choice token one_of
@@ -49,6 +46,39 @@ choice native_function one_of
   native_write_text
   native_append_text
   native_file_exists
+  native_arguments
+  native_environment
+  native_list_directory
+  native_create_directory
+  native_exit
+  native_subprocess
+  native_parse_json
+  native_stringify_json
+  native_join_path
+  native_normalize_path
+  native_basename
+  native_dirname
+  native_log
+
+public export
+choice value one_of
+  undefined_value
+  null_value
+  boolean_value Bool
+  number_value Double
+  string_value String
+  array_value Number
+  object_value Number
+  function_value Number
+  native_value native_function
+
+choice json_data one_of
+  json_null
+  json_boolean Bool
+  json_number Double
+  json_text Text
+  json_array (List json_data)
+  json_object (List (Text, json_data))
 
 public export
 choice host_request one_of
@@ -56,34 +86,51 @@ choice host_request one_of
   write_text_request String String
   append_text_request String String
   file_exists_request String
+  arguments_request
+  environment_request Text
+  list_directory_request Text
+  create_directory_request Text
+  exit_request Int
+  subprocess_request Text (List Text)
 
 public export
 choice host_response one_of
   text_response String
   boolean_response Bool
   done_response
+  texts_response (List Text)
+  optional_text_response (Maybe Text)
+  process_response Int Text
 
 public export
 Host : Type
 Host = host_request -> IO (Either String host_response)
 
-public export
-choice expression one_of
-  literal_expression value
-  variable_expression String
-  native_call_expression native_function (List expression)
-  unary_expression unary_operator expression
-  binary_expression binary_operator expression expression
-  assignment_expression String expression
+mutual
+  public export
+  choice expression one_of
+    literal_expression value
+    variable_expression String
+    native_call_expression native_function (List expression)
+    unary_expression unary_operator expression
+    binary_expression binary_operator expression expression
+    assignment_expression String expression
+    array_expression (List expression)
+    object_expression (List (Text, expression))
+    property_expression expression expression
+    property_assignment expression expression expression
+    call_expression expression (List expression)
+    function_expression (List Text) (List statement)
 
-public export
-choice statement one_of
-  define_statement String expression
-  expression_statement expression
-  log_statement (List expression)
-  block_statement (List statement)
-  if_statement expression statement (Maybe statement)
-  while_statement expression statement
+  public export
+  choice statement one_of
+    define_statement String expression
+    expression_statement expression
+    log_statement (List expression)
+    block_statement (List statement)
+    if_statement expression statement (Maybe statement)
+    while_statement expression statement
+    return_statement expression
 
 Environment : Type
 Environment = List (String, value)
@@ -156,6 +203,19 @@ native_function_text native_read_text = "readText"
 native_function_text native_write_text = "writeText"
 native_function_text native_append_text = "appendText"
 native_function_text native_file_exists = "fileExists"
+native_function_text native_arguments = "arguments"
+native_function_text native_environment = "environment"
+native_function_text native_list_directory = "listDirectory"
+native_function_text native_create_directory = "createDirectory"
+native_function_text native_exit = "exit"
+native_function_text native_subprocess = "subprocess"
+native_function_text native_parse_json = "parseJson"
+native_function_text native_stringify_json = "stringifyJson"
+native_function_text native_join_path = "joinPath"
+native_function_text native_normalize_path = "normalizePath"
+native_function_text native_basename = "basename"
+native_function_text native_dirname = "dirname"
+native_function_text native_log = "console.log"
 
 public export
 parse_native_function : String -> Maybe native_function
@@ -163,6 +223,18 @@ parse_native_function "readText" = Just native_read_text
 parse_native_function "writeText" = Just native_write_text
 parse_native_function "appendText" = Just native_append_text
 parse_native_function "fileExists" = Just native_file_exists
+parse_native_function "arguments" = Just native_arguments
+parse_native_function "environment" = Just native_environment
+parse_native_function "listDirectory" = Just native_list_directory
+parse_native_function "createDirectory" = Just native_create_directory
+parse_native_function "exit" = Just native_exit
+parse_native_function "subprocess" = Just native_subprocess
+parse_native_function "parseJson" = Just native_parse_json
+parse_native_function "stringifyJson" = Just native_stringify_json
+parse_native_function "joinPath" = Just native_join_path
+parse_native_function "normalizePath" = Just native_normalize_path
+parse_native_function "basename" = Just native_basename
+parse_native_function "dirname" = Just native_dirname
 parse_native_function _ = Nothing
 
 identifier_start : Char -> Bool
@@ -308,11 +380,16 @@ mutual
           variable_expression name => do
             (right, remaining) <- parse_assignment after_arrow
             Right (assignment_expression name right, remaining)
-          _ => Left "left side of assignment must be a variable"
-      symbol_token "→" :: word_token name :: remaining =>
-        Right (assignment_expression name left, remaining)
-      symbol_token "→" :: _ =>
-        Left "right side of rightward assignment must be a variable"
+          property_expression owner key => do
+            (right, remaining) <- parse_assignment after_arrow
+            Right (property_assignment owner key right, remaining)
+          _ => Left "left side of assignment must be a variable or property"
+      symbol_token "→" :: after_arrow => do
+        (target, remaining) <- parse_postfix after_arrow
+        case target of
+          variable_expression name => Right (assignment_expression name left, remaining)
+          property_expression owner key => Right (property_assignment owner key left, remaining)
+          _ => Left "right side of rightward assignment must be a variable or property"
       _ => Right (left, rest)
 
   parse_or : Parser expression
@@ -346,8 +423,74 @@ mutual
       Just operator => do
         (body, remaining) <- parse_unary rest
         Right (unary_expression operator body, remaining)
-      Nothing => parse_primary input
-  parse_unary input = parse_primary input
+      Nothing => parse_postfix input
+  parse_unary input = parse_postfix input
+
+  parse_postfix : Parser expression
+  parse_postfix input = do
+    (first, rest) <- parse_primary input
+    continue first rest
+    where
+      continue : expression -> Parser expression
+      continue owner (symbol_token "." :: word_token name :: rest) =
+        continue (property_expression owner (literal_expression (string_value name))) rest
+      continue owner (symbol_token "[" :: rest) = do
+        (key, after_key) <- parse_expression rest
+        after_close <- expect_symbol "]" after_key
+        continue (property_expression owner key) after_close
+      continue callee (symbol_token "(" :: rest) = do
+        (arguments, remaining) <- parse_sequence ")" rest
+        continue (call_expression callee arguments) remaining
+      continue first remaining = Right (first, remaining)
+
+  parse_sequence : Text -> Parser (List expression)
+  parse_sequence close input@(symbol_token actual :: rest) =
+    if actual == close then Right ([], rest) else parse_nonempty_sequence close input
+  parse_sequence close input = parse_nonempty_sequence close input
+
+  parse_nonempty_sequence : Text -> Parser (List expression)
+  parse_nonempty_sequence close input = do
+    (first, rest) <- parse_expression input
+    case rest of
+      symbol_token "," :: after_comma => do
+        (later, remaining) <- parse_nonempty_sequence close after_comma
+        Right (first :: later, remaining)
+      _ => do
+        after_close <- expect_symbol close rest
+        Right ([first], after_close)
+
+  parse_properties : Parser (List (Text, expression))
+  parse_properties (symbol_token "}" :: rest) = Right ([], rest)
+  parse_properties input = parse_nonempty_properties input
+
+  parse_nonempty_properties : Parser (List (Text, expression))
+  parse_nonempty_properties input = do
+    (name, rest) <- parse_property_name input
+    after_colon <- expect_symbol ":" rest
+    (body, after_body) <- parse_expression after_colon
+    case after_body of
+      symbol_token "," :: after_comma => do
+        (later, remaining) <- parse_nonempty_properties after_comma
+        Right ((name, body) :: later, remaining)
+      _ => do
+        after_close <- expect_symbol "}" after_body
+        Right ([(name, body)], after_close)
+
+  parse_property_name : Parser Text
+  parse_property_name (word_token name :: rest) = Right (name, rest)
+  parse_property_name (text_token name :: rest) = Right (name, rest)
+  parse_property_name _ = Left "object property requires a name or text key"
+
+  parse_parameters : Parser (List Text)
+  parse_parameters (symbol_token ")" :: rest) = Right ([], rest)
+  parse_parameters input = parse_nonempty_parameters input
+
+  parse_nonempty_parameters : Parser (List Text)
+  parse_nonempty_parameters (word_token name :: symbol_token "," :: rest) = do
+    (later, remaining) <- parse_nonempty_parameters rest
+    if elem name later then Left "duplicate function parameter" else Right (name :: later, remaining)
+  parse_nonempty_parameters (word_token name :: symbol_token ")" :: rest) = Right ([name], rest)
+  parse_nonempty_parameters _ = Left "expected function parameter or ')'"
 
   parse_primary : Parser expression
   parse_primary (number_token text :: rest) =
@@ -360,25 +503,17 @@ mutual
   parse_primary (symbol_token "Ø" :: rest) = Right (literal_expression (boolean_value False), rest)
   parse_primary (word_token "null" :: rest) = Right (literal_expression null_value, rest)
   parse_primary (word_token "undefined" :: rest) = Right (literal_expression undefined_value, rest)
-  parse_primary (word_token name :: symbol_token "(" :: rest) =
-    case parse_native_function name of
-      Just native => do
-        (arguments, remaining) <- parse_native_arguments rest
-        Right (native_call_expression native arguments, remaining)
-      Nothing => Left ("unsupported native call '" ++ name ++ "'")
-    where
-      parse_native_arguments : List token -> Either String (List expression, List token)
-      parse_native_arguments (symbol_token ")" :: remaining) = Right ([], remaining)
-      parse_native_arguments input = do
-        (first, after_first) <- parse_expression input
-        continue [first] after_first
-        where
-          continue : List expression -> List token -> Either String (List expression, List token)
-          continue collected (symbol_token "," :: after_comma) = do
-            (next, after_next) <- parse_expression after_comma
-            continue (next :: collected) after_next
-          continue collected (symbol_token ")" :: remaining) = Right (reverse collected, remaining)
-          continue _ _ = Left "expected ',' or ')' in native call"
+  parse_primary (word_token "function" :: symbol_token "(" :: rest) = do
+    (parameter_names, after_parameters) <- parse_parameters rest
+    after_open <- expect_symbol "{" after_parameters
+    (body, remaining) <- parse_function_block after_open
+    Right (function_expression parameter_names body, remaining)
+  parse_primary (symbol_token "[" :: rest) = do
+    (members, remaining) <- parse_sequence "]" rest
+    Right (array_expression members, remaining)
+  parse_primary (symbol_token "{" :: rest) = do
+    (members, remaining) <- parse_properties rest
+    Right (object_expression members, remaining)
   parse_primary (word_token name :: rest) = Right (variable_expression name, rest)
   parse_primary (symbol_token "(" :: rest) = do
     (inside, remaining) <- parse_expression rest
@@ -387,20 +522,14 @@ mutual
   parse_primary [] = Left "expected expression, found end of input"
   parse_primary _ = Left "expected expression"
 
-parse_log_arguments : List token -> Either String (List expression, List token)
-parse_log_arguments (symbol_token ")" :: rest) = Right ([], rest)
-parse_log_arguments input = do
-  (first, rest) <- parse_expression input
-  continue [first] rest
-  where
-    continue : List expression -> List token -> Either String (List expression, List token)
-    continue collected (symbol_token "," :: rest) = do
-      (next, remaining) <- parse_expression rest
-      continue (next :: collected) remaining
-    continue collected (symbol_token ")" :: rest) = Right (reverse collected, rest)
-    continue _ _ = Left "expected ',' or ')' in console.log"
+  parse_function_block : Parser (List statement)
+  parse_function_block [] = Left "unterminated function body"
+  parse_function_block (symbol_token "}" :: rest) = Right ([], rest)
+  parse_function_block input = do
+    (first, rest) <- parse_statement input
+    (later, remaining) <- parse_function_block rest
+    Right (first :: later, remaining)
 
-mutual
   parse_statement : Parser statement
   parse_statement (word_token keyword :: word_token name :: rest) =
     if elem keyword ["var", "let", "const"]
@@ -413,9 +542,16 @@ mutual
   parse_statement input = parse_other_statement input
 
   parse_other_statement : Parser statement
-  parse_other_statement (word_token "console" :: symbol_token "." :: word_token "log" :: symbol_token "(" :: rest) = do
-    (arguments, remaining) <- parse_log_arguments rest
-    Right (log_statement arguments, drop_semicolon remaining)
+  parse_other_statement (word_token "function" :: word_token name :: symbol_token "(" :: rest) = do
+    (parameter_names, after_parameters) <- parse_parameters rest
+    after_open <- expect_symbol "{" after_parameters
+    (body, remaining) <- parse_function_block after_open
+    Right (define_statement name (function_expression parameter_names body), remaining)
+  parse_other_statement (word_token "return" :: symbol_token ";" :: rest) =
+    Right (return_statement (literal_expression undefined_value), rest)
+  parse_other_statement (word_token "return" :: rest) = do
+    (body, remaining) <- parse_expression rest
+    Right (return_statement body, drop_semicolon remaining)
   parse_other_statement (word_token "if" :: symbol_token "(" :: rest) = do
     (condition, after_condition) <- parse_expression rest
     after_close <- expect_symbol ")" after_condition
@@ -481,6 +617,10 @@ render (boolean_value True) = "true"
 render (boolean_value False) = "false"
 render (number_value number) = show number
 render (string_value text) = text
+render (array_value _) = "[array]"
+render (object_value _) = "[object]"
+render (function_value _) = "[function]"
+render (native_value native) = "[native " ++ native_function_text native ++ "]"
 
 truthy : value -> Bool
 truthy undefined_value = False
@@ -488,6 +628,7 @@ truthy null_value = False
 truthy (boolean_value truth) = truth
 truthy (number_value number) = number /= 0.0
 truthy (string_value text) = text /= ""
+truthy _ = True
 
 number_from_value : value -> Either String Double
 number_from_value (number_value number) = Right number
@@ -499,6 +640,7 @@ number_from_value (string_value text) =
     Just number => Right number
     Nothing => Left ("cannot convert '" ++ text ++ "' to number")
 number_from_value undefined_value = Left "cannot convert undefined to number"
+number_from_value _ = Left "cannot convert structured value or function to number"
 
 same_value : value -> value -> Bool
 same_value undefined_value undefined_value = True
@@ -506,6 +648,10 @@ same_value null_value null_value = True
 same_value (boolean_value left) (boolean_value right) = left == right
 same_value (number_value left) (number_value right) = left == right
 same_value (string_value left) (string_value right) = left == right
+same_value (array_value left) (array_value right) = left == right
+same_value (object_value left) (object_value right) = left == right
+same_value (function_value left) (function_value right) = left == right
+same_value (native_value left) (native_value right) = native_function_text left == native_function_text right
 same_value _ _ = False
 
 coercive_equal : value -> value -> Bool
@@ -563,242 +709,815 @@ file_problem : String -> String -> FileError -> String
 file_problem operation path problem =
   operation ++ " '" ++ path ++ "': " ++ show problem
 
-native_arity_problem : native_function -> Nat -> Nat -> String
+-- Identities belong to interpreter storage; no host handles enter this model.
+record Aggregate where
+  constructor AggregateContents
+  array_length : Maybe Number
+  properties : List (Text, value)
+
+record Closure where
+  constructor CapturedFunction
+  parameter_names : List Text
+  body : List statement
+  bindings : List (Text, Number)
+
+record Runtime where
+  constructor ScriptState
+  bindings : List (Text, Number)
+  cells : List (Number, value)
+  aggregates : List (Number, Aggregate)
+  functions : List (Number, Closure)
+  next_identity : Number
+  output : List Text
+  returned : Maybe value
+  stopped : Maybe Int
+  call_depth : Number
+
+initial_state : Runtime
+initial_state = ScriptState [] [] [] [] 0 [] Nothing Nothing 0
+
+lookup_entry : Eq key => key → List (key, item) → Maybe item
+lookup_entry name [] = Nothing
+lookup_entry name ((candidate, found) :: rest) =
+  if name ≟ candidate then Just found else lookup_entry name rest
+
+put_entry : Eq key => key → item → List (key, item) → List (key, item)
+put_entry name found [] = [(name, found)]
+put_entry name found ((candidate, previous) :: rest) =
+  if name ≟ candidate then (name, found) :: rest
+    else (candidate, previous) :: put_entry name found rest
+
+bind_local : Text → value → Runtime → Runtime
+bind_local name found state =
+  let identity = state.next_identity in
+  { bindings := (name, identity) :: state.bindings,
+    cells := (identity, found) :: state.cells,
+    next_identity := S identity } state
+
+read_binding : Text → Runtime → Either Text value
+read_binding name state = do
+  identity ← maybe (Left ("unknown variable '" ++ name ++ "'")) Right
+                   (lookup_entry name state.bindings)
+  maybe (Left "invalid binding identity") Right (lookup_entry identity state.cells)
+
+write_binding : Text → value → Runtime → Runtime
+write_binding name found state =
+  case lookup_entry name state.bindings of
+    Nothing ⇒ bind_local name found state
+    Just identity ⇒ { cells := put_entry identity found state.cells } state
+
+allocate_aggregate : Maybe Number → List (Text, value) → Runtime → (value, Runtime)
+allocate_aggregate size members state =
+  let identity = state.next_identity
+      result = case size of
+        Nothing ⇒ object_value identity
+        Just _ ⇒ array_value identity
+   in (result, { aggregates := (identity, AggregateContents size
+                   (foldl (\kept, pair ⇒ put_entry (fst pair) (snd pair) kept) [] members)) :: state.aggregates,
+                 next_identity := S identity } state)
+
+indexed_members : Number → List value → List (Text, value)
+indexed_members index [] = []
+indexed_members index (first :: rest) = (show index, first) :: indexed_members (S index) rest
+
+allocate_array : List value → Runtime → (value, Runtime)
+allocate_array members = allocate_aggregate (Just (length members)) (indexed_members 0 members)
+
+key_from_value : value → Either Text Text
+key_from_value (string_value text) = Right text
+key_from_value (number_value number) =
+  if number >= 0 && number == cast (the Integer (cast number))
+     then Right (show (the Integer (cast number)))
+     else Left "property number must be a nonnegative integer"
+key_from_value _ = Left "property key must be text or a nonnegative integer"
+
+array_index : Text → Either Text Number
+array_index text =
+  if text /= "" && all isDigit (unpack text)
+     then let index : Number = cast text in
+          if show index ≟ text then Right index else Left "array index must be canonical"
+     else Left "array index must be a nonnegative integer"
+
+read_property : Runtime → value → Text → Either Text value
+read_property state (array_value identity) key = do
+  contents ← maybe (Left "invalid array identity") Right (lookup_entry identity state.aggregates)
+  if key ≟ "length"
+     then Right (number_value (cast (fromMaybe 0 contents.array_length)))
+     else do
+       index ← array_index key
+       Right (fromMaybe undefined_value (lookup_entry key contents.properties))
+read_property state (object_value identity) key = do
+  contents ← maybe (Left "invalid object identity") Right (lookup_entry identity state.aggregates)
+  Right (fromMaybe undefined_value (lookup_entry key contents.properties))
+read_property state (string_value text) "length" = Right (number_value (cast (length text)))
+read_property _ _ _ = Left "property access requires an array, object, or text length"
+
+write_property : Runtime → value → Text → value → Either Text Runtime
+write_property state (array_value identity) key found = do
+  contents ← maybe (Left "invalid array identity") Right (lookup_entry identity state.aggregates)
+  index ← array_index key
+  let size = max (S index) (fromMaybe 0 contents.array_length)
+  let changed = AggregateContents (Just size) (put_entry key found contents.properties)
+  Right ({ aggregates := put_entry identity changed state.aggregates } state)
+write_property state (object_value identity) key found = do
+  contents ← maybe (Left "invalid object identity") Right (lookup_entry identity state.aggregates)
+  let changed : Aggregate = { properties := put_entry key found contents.properties } contents
+  Right ({ aggregates := put_entry identity changed state.aggregates } state)
+write_property _ _ _ _ = Left "property assignment requires an array or object"
+
+-- Pure POSIX lexical paths; filesystem state and platform services stay in Host.
+normalize_components : Bool → List Text → List Text → List Text
+normalize_components absolute kept [] = reverse kept
+normalize_components absolute kept (part :: rest) =
+  case part of
+    "" ⇒ normalize_components absolute kept rest
+    "." ⇒ normalize_components absolute kept rest
+    ".." ⇒ case kept of
+      previous :: earlier ⇒
+        if previous ≟ ".." then normalize_components absolute (".." :: kept) rest
+          else normalize_components absolute earlier rest
+      [] ⇒ normalize_components absolute (if absolute then [] else [".."]) rest
+    _ ⇒ normalize_components absolute (part :: kept) rest
+
+normalize_path : Text → Text
+normalize_path text =
+  let absolute = isPrefixOf "/" text
+      parts = normalize_components absolute [] (forget (Data.String.split (== '/') text))
+      result = (if absolute then "/" else "") ++ joinBy "/" parts
+   in if result ≟ "" then "." else result
+
+join_path_parts : Text → List Text → Text
+join_path_parts kept [] = normalize_path kept
+join_path_parts kept (part :: rest) =
+  join_path_parts
+    (if isPrefixOf "/" part then part else
+      if part ≟ "" then kept else if kept ≟ "" then part else kept ++ "/" ++ part) rest
+
+path_basename : Text → Text
+path_basename text =
+  case reverse (filter (/= "") (forget (Data.String.split (== '/') (normalize_path text)))) of
+    [] ⇒ "/"
+    name :: _ ⇒ name
+
+path_dirname : Text → Text
+path_dirname text =
+  let normalized = normalize_path text in
+  case reverse (filter (/= "") (forget (Data.String.split (== '/') normalized))) of
+    [] ⇒ "/"
+    _ :: parents ⇒
+      let result = (if isPrefixOf "/" normalized then "/" else "") ++ joinBy "/" (reverse parents)
+       in if result ≟ "" then "." else result
+
+-- JSON has its own strict scanner; Field Mouse syntax is never accepted as JSON.
+json_space : Char → Bool
+json_space character = elem character [' ', '\t', '\r', '\n']
+
+hex_value : Char → Maybe Int
+hex_value character =
+  if character >= '0' && character <= '9' then Just (ord character - ord '0')
+  else if character >= 'a' && character <= 'f' then Just (ord character - ord 'a' + 10)
+  else if character >= 'A' && character <= 'F' then Just (ord character - ord 'A' + 10)
+  else Nothing
+
+read_hex_quad : List Char → Either Text (Int, List Char)
+read_hex_quad (a :: b :: c :: d :: rest) = do
+  av ← maybe (Left "invalid Unicode escape") Right (hex_value a)
+  bv ← maybe (Left "invalid Unicode escape") Right (hex_value b)
+  cv ← maybe (Left "invalid Unicode escape") Right (hex_value c)
+  dv ← maybe (Left "invalid Unicode escape") Right (hex_value d)
+  Right (av * 4096 + bv * 256 + cv * 16 + dv, rest)
+read_hex_quad _ = Left "incomplete Unicode escape"
+
+read_json_string : List Char → List Char → Either Text (Text, List Char)
+read_json_string collected [] = Left "unterminated JSON string"
+read_json_string collected ('"' :: rest) = Right (pack (reverse collected), rest)
+read_json_string collected ('\\' :: 'u' :: rest) = do
+  (first, after_first) ← read_hex_quad rest
+  if first >= 55296 && first <= 56319 then
+    (case after_first of
+      '\\' :: 'u' :: after_escape ⇒ do
+        (second, after_second) ← read_hex_quad after_escape
+        if second >= 56320 && second <= 57343
+          then read_json_string (chr (65536 + (first - 55296) * 1024 + second - 56320) :: collected) after_second
+          else Left "invalid low surrogate"
+      _ ⇒ Left "high surrogate requires a low surrogate")
+    else if first >= 56320 && first <= 57343 then Left "unpaired low surrogate"
+      else read_json_string (chr first :: collected) after_first
+read_json_string collected ('\\' :: escaped :: rest) =
+  case escaped of
+    '"' ⇒ read_json_string ('"' :: collected) rest
+    '\\' ⇒ read_json_string ('\\' :: collected) rest
+    '/' ⇒ read_json_string ('/' :: collected) rest
+    'b' ⇒ read_json_string ('\b' :: collected) rest
+    'f' ⇒ read_json_string ('\f' :: collected) rest
+    'n' ⇒ read_json_string ('\n' :: collected) rest
+    'r' ⇒ read_json_string ('\r' :: collected) rest
+    't' ⇒ read_json_string ('\t' :: collected) rest
+    _ ⇒ Left "invalid JSON escape"
+read_json_string collected (character :: rest) =
+  if ord character < 32 then Left "unescaped control character"
+    else read_json_string (character :: collected) rest
+
+json_number_tail : List Char → List Char → Either Text (Text, List Char)
+json_number_tail whole rest = do
+  (fraction, after_fraction) ← the (Either Text (List Char, List Char)) $ case rest of
+    '.' :: after_dot ⇒
+      let (digits, remaining) = take_while isDigit after_dot in
+      if null digits then Left "missing fraction digits" else Right ('.' :: digits, remaining)
+    _ ⇒ Right ([], rest)
+  (exponent, remaining) ← the (Either Text (List Char, List Char)) $ case after_fraction of
+    marker :: after_marker ⇒
+      if marker ≟ 'e' || marker ≟ 'E' then do
+        let (sign, after_sign) = the (List Char, List Char) $ case after_marker of
+              '+' :: remaining ⇒ (['+'], remaining)
+              '-' :: remaining ⇒ (['-'], remaining)
+              _ ⇒ ([], after_marker)
+        let (digits, after_digits) = take_while isDigit after_sign
+        if null digits then Left "missing exponent digits"
+          else Right (marker :: (sign ++ digits), after_digits)
+      else Right ([], after_fraction)
+    [] ⇒ Right ([], [])
+  Right (pack (whole ++ fraction ++ exponent), remaining)
+
+read_json_number : List Char → Either Text (json_data, List Char)
+read_json_number input = do
+  let (sign, after_sign) = the (List Char, List Char) $ case input of
+        '-' :: rest ⇒ (['-'], rest)
+        _ ⇒ ([], input)
+  (whole, rest) ← the (Either Text (List Char, List Char)) $ case after_sign of
+    '0' :: rest ⇒ Right (['0'], rest)
+    first :: rest ⇒
+      if first >= '1' && first <= '9'
+        then let (digits, after_digits) = take_while isDigit rest
+              in Right (first :: digits, after_digits)
+        else Left "expected JSON value"
+    [] ⇒ Left "expected JSON value"
+  (text, remaining) ← json_number_tail (sign ++ whole) rest
+  number ← maybe (Left "invalid JSON number") Right (parseDouble text)
+  let rendered = toLower (show number)
+  if isInfixOf "inf" rendered || isInfixOf "nan" rendered then Left "nonfinite JSON number"
+    else Right (json_number number, remaining)
+
+mutual
+  parse_json_value : List Char → Either Text (json_data, List Char)
+  parse_json_value input =
+    case snd (take_while json_space input) of
+      'n' :: 'u' :: 'l' :: 'l' :: rest ⇒ Right (json_null, rest)
+      't' :: 'r' :: 'u' :: 'e' :: rest ⇒ Right (json_boolean True, rest)
+      'f' :: 'a' :: 'l' :: 's' :: 'e' :: rest ⇒ Right (json_boolean False, rest)
+      '"' :: rest ⇒ do
+        (text, remaining) ← read_json_string [] rest
+        Right (json_text text, remaining)
+      '[' :: rest ⇒ do
+        (members, remaining) ← parse_json_array rest
+        Right (json_array members, remaining)
+      '{' :: rest ⇒ do
+        (members, remaining) ← parse_json_object rest
+        Right (json_object members, remaining)
+      rest ⇒ read_json_number rest
+
+  parse_json_array : List Char → Either Text (List json_data, List Char)
+  parse_json_array input =
+    case snd (take_while json_space input) of
+      ']' :: rest ⇒ Right ([], rest)
+      rest ⇒ parse_json_array_member rest
+
+  parse_json_array_member : List Char → Either Text (List json_data, List Char)
+  parse_json_array_member input = do
+    (first, after_first) ← parse_json_value input
+    case snd (take_while json_space after_first) of
+      ']' :: rest ⇒ Right ([first], rest)
+      ',' :: rest ⇒ do
+        (later, remaining) ← parse_json_array_member rest
+        Right (first :: later, remaining)
+      _ ⇒ Left "expected ',' or ']'"
+
+  parse_json_object : List Char → Either Text (List (Text, json_data), List Char)
+  parse_json_object input =
+    case snd (take_while json_space input) of
+      '}' :: rest ⇒ Right ([], rest)
+      rest ⇒ parse_json_object_member rest
+
+  parse_json_object_member : List Char → Either Text (List (Text, json_data), List Char)
+  parse_json_object_member input =
+    case snd (take_while json_space input) of
+      '"' :: rest ⇒ do
+        (key, after_key) ← read_json_string [] rest
+        case snd (take_while json_space after_key) of
+          ':' :: after_colon ⇒ do
+            (first, after_first) ← parse_json_value after_colon
+            case snd (take_while json_space after_first) of
+              '}' :: remaining ⇒ Right ([(key, first)], remaining)
+              ',' :: remaining ⇒ do
+                (later, after_later) ← parse_json_object_member remaining
+                Right ((key, first) :: later, after_later)
+              _ ⇒ Left "expected ',' or '}'"
+          _ ⇒ Left "expected ':'"
+      _ ⇒ Left "expected quoted JSON property"
+
+parse_json_text : Text → Either Text json_data
+parse_json_text text = do
+  (found, rest) ← parse_json_value (unpack text)
+  if null (snd (take_while json_space rest)) then Right found
+    else Left "trailing JSON data"
+
+mutual
+  import_json : json_data → Runtime → (value, Runtime)
+  import_json json_null state = (null_value, state)
+  import_json (json_boolean truth) state = (boolean_value truth, state)
+  import_json (json_number number) state = (number_value number, state)
+  import_json (json_text text) state = (string_value text, state)
+  import_json (json_array members) state =
+    let (values, after) = import_json_many members state in allocate_array values after
+  import_json (json_object members) state =
+    let (values, after) = import_json_properties members state
+     in allocate_aggregate Nothing values after
+
+  import_json_many : List json_data → Runtime → (List value, Runtime)
+  import_json_many [] state = ([], state)
+  import_json_many (first :: rest) state =
+    let (found, after_first) = import_json first state
+        (later, after_later) = import_json_many rest after_first
+     in (found :: later, after_later)
+
+  import_json_properties : List (Text, json_data) → Runtime → (List (Text, value), Runtime)
+  import_json_properties [] state = ([], state)
+  import_json_properties ((key, first) :: rest) state =
+    let (found, after_first) = import_json first state
+        (later, after_later) = import_json_properties rest after_first
+     in ((key, found) :: later, after_later)
+
+hex_digit : Int → Text
+hex_digit digit = pack [chr (if digit < 10 then ord '0' + digit else ord 'a' + digit - 10)]
+
+quote_json : Text → Text
+quote_json text = "\"" ++ concatMap escape_character (unpack text) ++ "\""
+  where
+    escape_character : Char → Text
+    escape_character '"' = "\\\""
+    escape_character '\\' = "\\\\"
+    escape_character '\n' = "\\n"
+    escape_character '\r' = "\\r"
+    escape_character '\t' = "\\t"
+    escape_character character =
+      if ord character < 32
+        then "\\u00" ++ hex_digit (ord character `div` 16) ++ hex_digit (ord character `mod` 16)
+        else pack [character]
+
+mutual
+  serialize_json : Runtime → List Number → value → Either Text Text
+  serialize_json state ancestors null_value = Right "null"
+  serialize_json state ancestors (boolean_value truth) = Right (if truth then "true" else "false")
+  serialize_json state ancestors (number_value number) =
+    let text = show number in
+    if isInfixOf "nan" (toLower text) || isInfixOf "inf" (toLower text)
+      then Left "stringifyJson: nonfinite number"
+      else Right text
+  serialize_json state ancestors (string_value text) = Right (quote_json text)
+  serialize_json state ancestors (array_value identity) = do
+    if elem identity ancestors then Left "stringifyJson: cyclic array" else Right ()
+    contents ← maybe (Left "invalid array identity") Right (lookup_entry identity state.aggregates)
+    members ← serialize_array state (identity :: ancestors) contents 0 (fromMaybe 0 contents.array_length)
+    Right ("[" ++ joinBy "," members ++ "]")
+  serialize_json state ancestors (object_value identity) = do
+    if elem identity ancestors then Left "stringifyJson: cyclic object" else Right ()
+    contents ← maybe (Left "invalid object identity") Right (lookup_entry identity state.aggregates)
+    members ← traverse (serialize_member state (identity :: ancestors)) contents.properties
+    Right ("{" ++ joinBy "," members ++ "}")
+  serialize_json _ _ _ = Left "stringifyJson: undefined and functions are not JSON data"
+
+  serialize_member : Runtime → List Number → (Text, value) → Either Text Text
+  serialize_member state ancestors (key, found) = do
+    text ← serialize_json state ancestors found
+    Right (quote_json key ++ ":" ++ text)
+
+  serialize_array : Runtime → List Number → Aggregate → Number → Number → Either Text (List Text)
+  serialize_array state ancestors contents index size =
+    if index >= size then Right [] else do
+      text ← serialize_json state ancestors
+        (fromMaybe null_value (lookup_entry (show index) contents.properties))
+      later ← serialize_array state ancestors contents (S index) size
+      Right (text :: later)
+
+text_values : List value → Either Text (List Text)
+text_values [] = Right []
+text_values (string_value text :: rest) = do
+  later ← text_values rest
+  Right (text :: later)
+text_values _ = Left "expected an array of text"
+
+array_text_values : Runtime → value → Either Text (List Text)
+array_text_values state (array_value identity) = do
+  contents ← maybe (Left "invalid array identity") Right (lookup_entry identity state.aggregates)
+  gather contents 0 (fromMaybe 0 contents.array_length)
+  where
+    gather : Aggregate → Number → Number → Either Text (List Text)
+    gather contents index size =
+      if index >= size then Right [] else
+      case lookup_entry (show index) contents.properties of
+        Just (string_value text) ⇒ do
+          later ← gather contents (S index) size
+          Right (text :: later)
+        _ ⇒ Left "expected a dense array of text"
+array_text_values _ _ = Left "expected an array of text"
+
+native_arity_problem : native_function → Number → Number → Text
 native_arity_problem native expected actual =
   native_function_text native ++ ": expected " ++ show expected ++ " argument" ++
-  (if expected == 1 then "" else "s") ++ ", found " ++ show actual
+  (if expected ≟ 1 then "" else "s") ++ ", found " ++ show actual
 
-native_request : native_function -> List value -> Either String host_request
-native_request native_read_text [string_value path] =
-  Right (read_text_request path)
-native_request native_read_text [_] =
-  Left "readText: path must be text"
-native_request native_read_text arguments =
-  Left (native_arity_problem native_read_text 1 (length arguments))
-native_request native_write_text [string_value path, string_value contents] =
-  Right (write_text_request path contents)
-native_request native_write_text [_, _] =
-  Left "writeText: path and contents must be text"
-native_request native_write_text arguments =
-  Left (native_arity_problem native_write_text 2 (length arguments))
-native_request native_append_text [string_value path, string_value contents] =
-  Right (append_text_request path contents)
-native_request native_append_text [_, _] =
-  Left "appendText: path and contents must be text"
-native_request native_append_text arguments =
-  Left (native_arity_problem native_append_text 2 (length arguments))
-native_request native_file_exists [string_value path] =
-  Right (file_exists_request path)
-native_request native_file_exists [_] =
-  Left "fileExists: path must be text"
-native_request native_file_exists arguments =
-  Left (native_arity_problem native_file_exists 1 (length arguments))
+native_request : Runtime → native_function → List value → Either Text host_request
+native_request state native_read_text [string_value path] = Right (read_text_request path)
+native_request state native_write_text [string_value path, string_value contents] = Right (write_text_request path contents)
+native_request state native_append_text [string_value path, string_value contents] = Right (append_text_request path contents)
+native_request state native_file_exists [string_value path] = Right (file_exists_request path)
+native_request state native_arguments [] = Right arguments_request
+native_request state native_environment [string_value name] =
+  if name ≟ "" || any (\c ⇒ c ≟ '=' || c ≟ '\0') (unpack name)
+     then Left "environment: invalid variable name"
+     else Right (environment_request name)
+native_request state native_list_directory [string_value path] = Right (list_directory_request path)
+native_request state native_create_directory [string_value path] = Right (create_directory_request path)
+native_request state native_exit [number_value status] =
+  if status >= 0 && status <= 255 && status == cast (the Int (cast status))
+     then Right (exit_request (cast status))
+     else Left "exit: status must be an integer from 0 to 255"
+native_request state native_subprocess [string_value program, arguments] = do
+  values ← array_text_values state arguments
+  if program ≟ "" || any (\text ⇒ elem '\0' (unpack text)) (program :: values)
+    then Left "subprocess: empty program or NUL in argument"
+    else Right (subprocess_request program values)
+native_request state native arguments =
+  let expected : Number = case native of
+        native_arguments ⇒ 0
+        native_write_text ⇒ 2
+        native_append_text ⇒ 2
+        native_subprocess ⇒ 2
+        _ ⇒ 1
+   in if length arguments /= expected
+        then Left (native_arity_problem native expected (length arguments))
+        else Left (native_function_text native ++ ": invalid argument types")
 
-host_request_name : host_request -> String
+host_request_name : host_request → Text
 host_request_name (read_text_request _) = "readText"
 host_request_name (write_text_request _ _) = "writeText"
 host_request_name (append_text_request _ _) = "appendText"
 host_request_name (file_exists_request _) = "fileExists"
+host_request_name arguments_request = "arguments"
+host_request_name (environment_request _) = "environment"
+host_request_name (list_directory_request _) = "listDirectory"
+host_request_name (create_directory_request _) = "createDirectory"
+host_request_name (exit_request _) = "exit"
+host_request_name (subprocess_request _ _) = "subprocess"
 
-host_response_value : host_request -> host_response -> Either String value
-host_response_value (read_text_request _) (text_response contents) =
-  Right (string_value contents)
-host_response_value (write_text_request _ _) done_response =
-  Right undefined_value
-host_response_value (append_text_request _ _) done_response =
-  Right undefined_value
-host_response_value (file_exists_request _) (boolean_response found) =
-  Right (boolean_value found)
-host_response_value request _ =
+validate_host_text : host_request → Either Text ()
+validate_host_text request =
+  let texts : List Text = case request of
+        read_text_request path ⇒ [path]
+        write_text_request path contents ⇒ [path, contents]
+        append_text_request path contents ⇒ [path, contents]
+        file_exists_request path ⇒ [path]
+        list_directory_request path ⇒ [path]
+        create_directory_request path ⇒ [path]
+        _ ⇒ []
+   in if any (\text ⇒ elem '\0' (unpack text)) texts
+        then Left (host_request_name request ++ ": NUL is not supported in file text or paths")
+        else Right ()
+
+host_response_value : Runtime → host_request → host_response → Either Text (value, Runtime)
+host_response_value state (read_text_request _) (text_response text) = Right (string_value text, state)
+host_response_value state (write_text_request _ _) done_response = Right (undefined_value, state)
+host_response_value state (append_text_request _ _) done_response = Right (undefined_value, state)
+host_response_value state (file_exists_request _) (boolean_response truth) = Right (boolean_value truth, state)
+host_response_value state arguments_request (texts_response texts) = Right (allocate_array (map string_value texts) state)
+host_response_value state (environment_request _) (optional_text_response text) =
+  Right (maybe undefined_value string_value text, state)
+host_response_value state (list_directory_request _) (texts_response texts) =
+  Right (allocate_array (map string_value texts) state)
+host_response_value state (create_directory_request _) done_response = Right (undefined_value, state)
+host_response_value state (exit_request status) done_response = Right (undefined_value, { stopped := Just status } state)
+host_response_value state (subprocess_request _ _) (process_response status text) =
+  Right (allocate_aggregate Nothing [("status", number_value (cast status)), ("stdout", string_value text)] state)
+host_response_value state request _ =
   Left ("host returned wrong response for '" ++ host_request_name request ++ "'")
 
-file_host : Host
-file_host (read_text_request path) = do
-  result <- readFile path
-  case result of
-    Left problem => pure (Left (file_problem "readText" path problem))
-    Right contents => pure (Right (text_response contents))
-file_host (write_text_request path contents) = do
-  result <- writeFile path contents
-  case result of
-    Left problem => pure (Left (file_problem "writeText" path problem))
-    Right () => pure (Right done_response)
-file_host (append_text_request path contents) = do
-  result <- appendFile path contents
-  case result of
-    Left problem => pure (Left (file_problem "appendText" path problem))
-    Right () => pure (Right done_response)
-file_host (file_exists_request path) = do
-  found <- exists path
+file_host : List Text → Host
+file_host arguments (read_text_request path) = do
+  result ← readFile path
+  pure (case result of
+    Left problem ⇒ Left (file_problem "readText" path problem)
+    Right text ⇒ Right (text_response text))
+file_host arguments (write_text_request path contents) = do
+  result ← writeFile path contents
+  pure (case result of
+    Left problem ⇒ Left (file_problem "writeText" path problem)
+    Right () ⇒ Right done_response)
+file_host arguments (append_text_request path contents) = do
+  result ← appendFile path contents
+  pure (case result of
+    Left problem ⇒ Left (file_problem "appendText" path problem)
+    Right () ⇒ Right done_response)
+file_host arguments (file_exists_request path) = do
+  found ← exists path
   pure (Right (boolean_response found))
+file_host arguments arguments_request = pure (Right (texts_response arguments))
+file_host arguments (environment_request name) = do
+  text ← getEnv name
+  pure (Right (optional_text_response text))
+file_host arguments (list_directory_request path) = do
+  result ← listDir path
+  pure (case result of
+    Left problem ⇒ Left (file_problem "listDirectory" path problem)
+    Right names ⇒ Right (texts_response (sort names)))
+file_host arguments (create_directory_request path) = do
+  result ← createDir path
+  pure (case result of
+    Left problem ⇒ Left (file_problem "createDirectory" path problem)
+    Right () ⇒ Right done_response)
+file_host arguments (exit_request _) = pure (Right done_response)
+file_host arguments (subprocess_request program parameter_names) = do
+  -- The inherited escaped process adapter quotes every argv element.
+  -- stdout is captured; stderr is inherited. No shell source is accepted.
+  (text, status) ← System.Escaped.run (program :: parameter_names)
+  pure (Right (process_response status text))
+
+halted : Runtime → Bool
+halted state = isJust state.returned || isJust state.stopped
 
 mutual
-  evaluate : Host -> Environment -> expression -> IO (Either String (value, Environment))
-  evaluate host environment (literal_expression literal) = pure (Right (literal, environment))
-  evaluate host environment (variable_expression name) =
-    case lookup_variable name environment of
-      Left problem => pure (Left problem)
-      Right found => pure (Right (found, environment))
-  evaluate host environment (native_call_expression name arguments) = do
-    result <- evaluate_many host environment arguments
-    case result of
-      Left problem => pure (Left problem)
-      Right (values, after_arguments) =>
-        case native_request name values of
-          Left problem => pure (Left problem)
-          Right request => do
-            host_result <- host request
-            case host_result of
-              Left problem => pure (Left problem)
-              Right response =>
-                case host_response_value request response of
-                  Left problem => pure (Left problem)
-                  Right answer => pure (Right (answer, after_arguments))
-  evaluate host environment (assignment_expression name body) = do
-    result <- evaluate host environment body
-    case result of
-      Left problem => pure (Left problem)
-      Right (new_value, after_body) =>
-        pure (Right (new_value, set_variable name new_value after_body))
-  evaluate host environment (unary_expression operator body) = do
-    result <- evaluate host environment body
-    case result of
-      Left problem => pure (Left problem)
-      Right (body_value, after_body) =>
-        case operator of
-          unary_not => pure (Right (boolean_value (not (truthy body_value)), after_body))
-          unary_negate => case number_from_value body_value of
-            Left problem => pure (Left problem)
-            Right number => pure (Right (number_value (-number), after_body))
-          unary_positive => case number_from_value body_value of
-            Left problem => pure (Left problem)
-            Right number => pure (Right (number_value number, after_body))
-  evaluate host environment (binary_expression binary_and left right) = do
-    result <- evaluate host environment left
-    case result of
-      Left problem => pure (Left problem)
-      Right (left_value, after_left) =>
-        if truthy left_value
-          then evaluate host after_left right
-          else pure (Right (left_value, after_left))
-  evaluate host environment (binary_expression binary_or left right) = do
-    result <- evaluate host environment left
-    case result of
-      Left problem => pure (Left problem)
-      Right (left_value, after_left) =>
-        if truthy left_value
-          then pure (Right (left_value, after_left))
-          else evaluate host after_left right
-  evaluate host environment (binary_expression operator left right) = do
-    left_result <- evaluate host environment left
-    case left_result of
-      Left problem => pure (Left problem)
-      Right (left_value, after_left) => do
-        right_result <- evaluate host after_left right
-        case right_result of
-          Left problem => pure (Left problem)
-          Right (right_value, after_right) =>
-            case calculate_binary operator left_value right_value of
-              Left problem => pure (Left problem)
-              Right answer => pure (Right (answer, after_right))
+  evaluate : Host → Runtime → expression → IO (Either Text (value, Runtime))
+  evaluate host state tree =
+    case state.stopped of
+      Just _ ⇒ pure (Right (undefined_value, state))
+      Nothing ⇒ evaluate_active host state tree
 
-  evaluate_many : Host -> Environment -> List expression -> IO (Either String (List value, Environment))
-  evaluate_many host environment [] = pure (Right ([], environment))
-  evaluate_many host environment (first :: rest) = do
-    first_result <- evaluate host environment first
-    case first_result of
-      Left problem => pure (Left problem)
-      Right (first_value, after_first) => do
-        later_result <- evaluate_many host after_first rest
-        case later_result of
-          Left problem => pure (Left problem)
-          Right (later_values, after_later) =>
-            pure (Right (first_value :: later_values, after_later))
+  evaluate_active : Host → Runtime → expression → IO (Either Text (value, Runtime))
+  evaluate_active host state (literal_expression literal) = pure (Right (literal, state))
+  evaluate_active host state (variable_expression name) =
+    case read_binding name state of
+      Right found ⇒ pure (Right (found, state))
+      Left problem ⇒ case parse_native_function name of
+        Just native ⇒ pure (Right (native_value native, state))
+        Nothing ⇒ pure (Left problem)
+  evaluate_active host state (native_call_expression native arguments) = do
+    result ← evaluate_many host state arguments
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (values, after) ⇒ invoke_native host after native values
+  evaluate_active host state (assignment_expression name body) = do
+    result ← evaluate host state body
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (found, after) ⇒ Right (found, write_binding name found after))
+  evaluate_active host state (array_expression members) = do
+    result ← evaluate_many host state members
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (values, after) ⇒ Right (allocate_array values after))
+  evaluate_active host state (object_expression members) = do
+    result ← evaluate_properties host state members
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (values, after) ⇒ Right (allocate_aggregate Nothing values after))
+  evaluate_active host state (function_expression parameter_names body) =
+    let identity = state.next_identity
+        captured = CapturedFunction parameter_names body state.bindings
+     in pure (Right (function_value identity,
+          { functions := (identity, captured) :: state.functions, next_identity := S identity } state))
+  evaluate_active host state (property_expression owner key) = do
+    result ← evaluate_many host state [owner, key]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([found, key_value], after) ⇒ do
+        if isJust after.stopped then Right (undefined_value, after) else do
+          name ← key_from_value key_value
+          result ← read_property after found name
+          Right (result, after)
+      _ ⇒ Left "invalid property evaluation")
+  evaluate_active host state (property_assignment owner key body) = do
+    result ← evaluate_many host state [owner, key, body]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([found, key_value, new_value], after) ⇒ do
+        if isJust after.stopped then Right (undefined_value, after) else do
+          name ← key_from_value key_value
+          changed ← write_property after found name new_value
+          Right (new_value, changed)
+      _ ⇒ Left "invalid property assignment")
+  evaluate_active host state (call_expression callee arguments) = do
+    result ← evaluate host state callee
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (function, after_callee) ⇒ do
+        argument_result ← evaluate_many host after_callee arguments
+        case argument_result of
+          Left problem ⇒ pure (Left problem)
+          Right (values, after_arguments) ⇒ invoke host after_arguments function values
+  evaluate_active host state (unary_expression operator body) = do
+    result ← evaluate host state body
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (found, after) ⇒ if isJust after.stopped then Right (undefined_value, after) else case operator of
+        unary_not ⇒ Right (boolean_value (not (truthy found)), after)
+        unary_negate ⇒ do
+          number ← number_from_value found
+          Right (number_value (-number), after)
+        unary_positive ⇒ do
+          number ← number_from_value found
+          Right (number_value number, after))
+  evaluate_active host state (binary_expression binary_and left right) = do
+    result ← evaluate host state left
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if truthy found then evaluate host after right else pure (Right (found, after))
+  evaluate_active host state (binary_expression binary_or left right) = do
+    result ← evaluate host state left
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if truthy found then pure (Right (found, after)) else evaluate host after right
+  evaluate_active host state (binary_expression operator left right) = do
+    result ← evaluate_many host state [left, right]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([left_value, right_value], after) ⇒ do
+        if isJust after.stopped then Right (undefined_value, after) else do
+          answer ← calculate_binary operator left_value right_value
+          Right (answer, after)
+      _ ⇒ Left "invalid binary evaluation")
 
-execute_statement : Host -> Environment -> statement -> IO (Either String (Environment, List String))
-execute_statement host environment (define_statement name initial) = do
-  result <- evaluate host environment initial
-  case result of
-    Left problem => pure (Left problem)
-    Right (initial_value, after_initial) =>
-      pure (Right (define_variable name initial_value after_initial, []))
-execute_statement host environment (expression_statement body) = do
-  result <- evaluate host environment body
-  case result of
-    Left problem => pure (Left problem)
-    Right (_, after_body) => pure (Right (after_body, []))
-execute_statement host environment (log_statement arguments) = do
-  result <- evaluate_many host environment arguments
-  case result of
-    Left problem => pure (Left problem)
-    Right (values, after_arguments) =>
-      pure (Right (after_arguments, [joinBy " " (map render values)]))
-execute_statement host environment (block_statement statements) = execute_block environment statements
-  where
-    execute_block : Environment -> List statement -> IO (Either String (Environment, List String))
-    execute_block current [] = pure (Right (current, []))
-    execute_block current (first :: rest) = do
-      first_result <- execute_statement host current first
-      case first_result of
-        Left problem => pure (Left problem)
-        Right (after_first, first_output) => do
-          later_result <- execute_block after_first rest
-          case later_result of
-            Left problem => pure (Left problem)
-            Right (after_rest, later_output) =>
-              pure (Right (after_rest, first_output ++ later_output))
-execute_statement host environment (if_statement condition yes_branch no_branch) = do
-  result <- evaluate host environment condition
-  case result of
-    Left problem => pure (Left problem)
-    Right (condition_value, after_condition) =>
-      if truthy condition_value
-        then execute_statement host after_condition yes_branch
-        else case no_branch of
-          Nothing => pure (Right (after_condition, []))
-          Just branch => execute_statement host after_condition branch
-execute_statement host environment loop@(while_statement condition body) = do
-  result <- evaluate host environment condition
-  case result of
-    Left problem => pure (Left problem)
-    Right (condition_value, after_condition) =>
-      if truthy condition_value
-        then do
-          body_result <- execute_statement host after_condition body
-          case body_result of
-            Left problem => pure (Left problem)
-            Right (after_body, body_output) => do
-              loop_result <- execute_statement host after_body loop
-              case loop_result of
-                Left problem => pure (Left problem)
-                Right (after_loop, later_output) =>
-                  pure (Right (after_loop, body_output ++ later_output))
-        else pure (Right (after_condition, []))
+  evaluate_many : Host → Runtime → List expression → IO (Either Text (List value, Runtime))
+  evaluate_many host state [] = pure (Right ([], state))
+  evaluate_many host state (first :: rest) = do
+    result ← evaluate host state first
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after_first) ⇒ do
+        later ← evaluate_many host after_first rest
+        pure (case later of
+          Left problem ⇒ Left problem
+          Right (values, after) ⇒ Right (found :: values, after))
 
-execute_statements : Host -> Environment -> List statement -> IO (Either String (Environment, List String))
-execute_statements host environment [] = pure (Right (environment, []))
-execute_statements host environment (first :: rest) = do
-  first_result <- execute_statement host environment first
-  case first_result of
-    Left problem => pure (Left problem)
-    Right (after_first, first_output) => do
-      later_result <- execute_statements host after_first rest
-      case later_result of
-        Left problem => pure (Left problem)
-        Right (after_rest, later_output) =>
-          pure (Right (after_rest, first_output ++ later_output))
+  evaluate_properties : Host → Runtime → List (Text, expression) → IO (Either Text (List (Text, value), Runtime))
+  evaluate_properties host state [] = pure (Right ([], state))
+  evaluate_properties host state ((key, first) :: rest) = do
+    result ← evaluate host state first
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after_first) ⇒ do
+        later ← evaluate_properties host after_first rest
+        pure (case later of
+          Left problem ⇒ Left problem
+          Right (values, after) ⇒ Right ((key, found) :: values, after))
 
-public export
-run_with_host : Host -> String -> IO (Either String (List String))
-run_with_host host source =
-  case parse source of
-    Left problem => pure (Left problem)
-    Right program => do
-      result <- execute_statements host [] program
+  invoke : Host → Runtime → value → List value → IO (Either Text (value, Runtime))
+  invoke host state function arguments =
+    if isJust state.stopped then pure (Right (undefined_value, state))
+      else invoke_active host state function arguments
+
+  invoke_active : Host → Runtime → value → List value → IO (Either Text (value, Runtime))
+  invoke_active host state (native_value native) arguments = invoke_native host state native arguments
+  invoke_active host state (function_value identity) arguments =
+    case lookup_entry identity state.functions of
+      Nothing ⇒ pure (Left "invalid function identity")
+      Just captured ⇒
+        if length arguments /= length captured.parameter_names
+          then pure (Left ("function: expected " ++ show (length captured.parameter_names) ++
+                           " arguments, found " ++ show (length arguments)))
+          else if state.call_depth >= 256
+            then pure (Left "function call depth exceeded 256")
+            else do
+              let entered = { bindings := captured.bindings, returned := Nothing,
+                              call_depth := S state.call_depth } state
+              let locals = foldl (\current, pair ⇒ bind_local (fst pair) (snd pair) current)
+                                 entered (zip captured.parameter_names arguments)
+              result ← execute_statements host locals captured.body
+              pure (case result of
+                Left problem ⇒ Left problem
+                Right after ⇒ Right (fromMaybe undefined_value after.returned,
+                  { bindings := state.bindings, returned := state.returned, call_depth := state.call_depth } after))
+  invoke_active _ _ _ _ = pure (Left "called value is not a function")
+
+  invoke_native : Host → Runtime → native_function → List value → IO (Either Text (value, Runtime))
+  invoke_native host state native arguments =
+    if isJust state.stopped then pure (Right (undefined_value, state))
+      else invoke_native_active host state native arguments
+
+  invoke_native_active : Host → Runtime → native_function → List value → IO (Either Text (value, Runtime))
+  invoke_native_active host state native_log arguments =
+    pure (Right (undefined_value, { output := state.output ++ [joinBy " " (map render arguments)] } state))
+  invoke_native_active host state native_parse_json [string_value text] =
+    pure (case parse_json_text text of
+      Left problem ⇒ Left ("parseJson: malformed JSON: " ++ problem)
+      Right data_value ⇒ Right (import_json data_value state))
+  invoke_native_active host state native_stringify_json [found] =
+    pure (do text ← serialize_json state [] found
+             Right (string_value text, state))
+  invoke_native_active host state native_join_path arguments =
+    pure (do parts ← text_values arguments
+             Right (string_value (case parts of
+               [] ⇒ "."
+               first :: rest ⇒ join_path_parts first rest), state))
+  invoke_native_active host state native_normalize_path [string_value text] =
+    pure (Right (string_value (normalize_path text), state))
+  invoke_native_active host state native_basename [string_value text] =
+    pure (Right (string_value (path_basename text), state))
+  invoke_native_active host state native_dirname [string_value text] =
+    pure (Right (string_value (path_dirname text), state))
+  invoke_native_active host state native arguments =
+    case native_request state native arguments of
+      Left problem ⇒ pure (Left problem)
+      Right request ⇒ do
+        case validate_host_text request of
+          Left problem ⇒ pure (Left problem)
+          Right () ⇒ do
+            response ← host request
+            pure (case response of
+              Left problem ⇒ Left problem
+              Right found ⇒ host_response_value state request found)
+
+  execute_statement : Host → Runtime → statement → IO (Either Text Runtime)
+  execute_statement host state (define_statement name initial) = do
+    -- Reserve the binding before capturing the function: self recursion is free.
+    let reserved = bind_local name undefined_value state
+    result ← evaluate host reserved initial
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (found, after) ⇒ Right (write_binding name found after))
+  execute_statement host state (expression_statement body) = do
+    result ← evaluate host state body
+    pure (map snd result)
+  execute_statement host state (log_statement arguments) = do
+    result ← evaluate_many host state arguments
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (values, after) ⇒ do
+        logged ← invoke_native host after native_log values
+        pure (map snd logged)
+  execute_statement host state (return_statement body) =
+    if state.call_depth ≟ 0 then pure (Left "return outside function") else do
+      result ← evaluate host state body
+      pure (case result of
+        Left problem ⇒ Left problem
+        Right (found, after) ⇒ Right ({ returned := Just found } after))
+  execute_statement host state (block_statement statements) = execute_statements host state statements
+  execute_statement host state (if_statement condition yes_branch no_branch) = do
+    result ← evaluate host state condition
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if isJust after.stopped then pure (Right after) else
+        if truthy found then execute_statement host after yes_branch else
+          case no_branch of
+            Nothing ⇒ pure (Right after)
+            Just branch ⇒ execute_statement host after branch
+  execute_statement host state loop@(while_statement condition body) = do
+    result ← evaluate host state condition
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if isJust after.stopped || not (truthy found) then pure (Right after) else do
+          result ← execute_statement host after body
+          case result of
+            Left problem ⇒ pure (Left problem)
+            Right after_body ⇒
+              if halted after_body then pure (Right after_body) else execute_statement host after_body loop
+
+  execute_statements : Host → Runtime → List statement → IO (Either Text Runtime)
+  execute_statements host state [] = pure (Right state)
+  execute_statements host state (first :: rest) =
+    if halted state then pure (Right state) else do
+      result ← execute_statement host state first
       case result of
-        Left problem => pure (Left problem)
-        Right (_, output) => pure (Right output)
+        Left problem ⇒ pure (Left problem)
+        Right after ⇒ execute_statements host after rest
 
 public export
-run : String -> IO (Either String (List String))
-run = run_with_host file_host
+run_command_with_host : Host → Text → IO (Either Text (List Text, Int))
+run_command_with_host host source =
+  case parse source of
+    Left problem ⇒ pure (Left problem)
+    Right program ⇒ do
+      let (console, with_console) = allocate_aggregate Nothing [("log", native_value native_log)] initial_state
+      result ← execute_statements host (bind_local "console" console with_console) program
+      pure (case result of
+        Left problem ⇒ Left problem
+        Right after ⇒ Right (after.output, fromMaybe 0 after.stopped))
+
+public export
+run_with_host : Host → Text → IO (Either Text (List Text))
+run_with_host host source = do
+  result ← run_command_with_host host source
+  pure (case result of
+    Left problem ⇒ Left problem
+    Right (output, 0) ⇒ Right output
+    Right (_, status) ⇒ Left ("script exited with status " ++ show status))
+
+public export
+run_command : List Text → Text → IO (Either Text (List Text, Int))
+run_command arguments = run_command_with_host (file_host arguments)
+
+public export
+run : Text → IO (Either Text (List Text))
+run = run_with_host (file_host [])

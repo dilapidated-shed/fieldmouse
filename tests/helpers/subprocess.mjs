@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import {spawnSync} from 'node:child_process';
+const args = process.argv.slice(2);
+if (args.length !== 1) process.exit(64);
+const result = spawnSync("/usr/bin/printf", ["%s", args[0]], {encoding:'utf8'});
+if (result.error || result.status !== 0) process.exit(70);
+fs.writeFileSync("child.txt", result.stdout);
+const bad = spawnSync("/usr/bin/false", []);
+if (bad.error || bad.status === 0) process.exit(71);
+console.log("child success and failure checked");
