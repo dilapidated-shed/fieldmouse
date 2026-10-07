@@ -1,94 +1,77 @@
-# Fieldmouse issues
+# Field Mouse backlog
 
-The GitHub issue tracker is currently disabled for this repository, so this file is the working backlog for the Edriç rewrite.
+The GitHub issue tracker is disabled; this file records remaining runtime work.
 
-## 1. Support JavaScript arrays and objects
+## First useful runtime: implemented, locally verified
 
-The current interpreter handles primitive values, bindings, expressions, blocks, conditionals, loops, and `console.log`, but not arrays or ordinary objects.
+Arrays, objects, nested mutation, ordinary/property calls, functions, parameters,
+return, lexical/local binding cells, closures, and self recursion are implemented
+in Idriç. Strict JSON, argv, environment, lexical paths, directory listing/creation,
+text files, deliberate exit, and subprocess status/stdout are implemented.
+The typed injectable host and compile-time refusals remain tested.
 
-Done when:
-- array literals and indexed reads/writes work;
-- object literals and named property reads/writes work;
-- missing properties have one consistent JavaScript-like result;
-- nested arrays/objects and mutation are tested;
-- the implementation stays in Edriç rather than restoring the old MuJS C core.
+Five helper tasks have Node references: generation, directory processing, JSON
+updates, subprocess orchestration, and structured request-log append. The last
+minimizes an actual cloud-storage-api script. Exact omitted constructs and the
+comparison contract are in `tests/helpers/README.md`.
 
-## 2. Add functions, calls, and property access
+The old arrays/objects, functions/calls, text-I/O, small build-script surface,
+compiler-drift, and corpus milestones are superseded by this first-runtime
+acceptance gate. This records implementation plus local execution, not an
+unobserved hosted-CI result. The current CI gate executes the full corpus.
 
-Build scripts need user-defined functions and ordinary call/property syntax before Fieldmouse is useful beyond tiny expressions.
+## 1. Cat Food integration follow-up
 
-Done when:
-- function declarations or expressions can be defined and called;
-- parameters and return values work;
-- lexical/local scope behavior is explicit and tested;
-- `object.name`, `object[name]`, and method-call syntax work;
-- recursion is not required merely to claim this slice complete.
+Inspection at Cat Food `62ac940588f5ee4c5be468d48e38d74514da3757` found:
+- `tools.tsv` still selects `edric-rewrite`, not active `master`.
+- `build-tools.sh:build_fieldmouse` uses `=` assignment and `===` comparison
+  in its smoke source; both contradict the current language contract.
+- `update-tools.ysh` links the generated command into stable bin. This works
+  when its generated Chez interpreter path remains available; copying a release
+  artifact requires preserving or deliberately relocating that runtime path.
+- `android/delivery.tsv` explicitly reports `gap:android-package-missing`.
 
-## 3. Provide native text file I/O
+Required change: follow the accepted master revision, use arrow assignments and
+`≟` in the build smoke, retain the compiled app directory and declared Chez
+runtime, then prove a fresh stable-bin invocation. Do not revive the old
+Cat Food PR #11 or describe it as current integration. No Cat Food rewrite or
+phone-side compiler bootstrap is required by this host runtime drive.
 
-The first useful file surface should not wait for objects, property calls, or a Node compatibility layer.
+## 2. Direct subprocess adapter
 
-Surface:
-- `readText(path)` returns the complete text;
-- `writeText(path, text)` creates or truncates a file;
-- `appendText(path, text)` creates or appends to a file;
-- `fileExists(path)` returns a Boolean;
-- I/O errors stop execution with an operation, path, and underlying error;
-- tests exercise create, truncate, append, read, existence, invalid arguments, and missing-file failure.
+The closed `subprocess_request Text (List Text)` interface is implemented.
+The initial file host uses Idriç's escaped synchronous process adapter, which
+quotes each argument and uses a shell internally. It captures stdout and
+inherits stderr. Replace only this host lowering with direct argument-vector
+execution when the supported compiler/runtime supplies it. Acceptance:
+literal spaces, quotes, newlines, semicolons, and command-substitution text stay
+literal; missing executables and failed children return nonzero status.
+The evaluator and host interface need no replacement.
 
-This slice does not include directories, binary buffers, `fs`, `path`, `process`, or general function compatibility.
+## 3. Concrete unsupported constructs
 
-## 4. Implement the small Node build-script surface
+Deliberately outside this gate:
+- ES-module/CommonJS imports, npm loading;
+- async functions, Promise construction, event listeners and server lifetimes;
+- Buffer.concat, object spread, optional chaining, nullish coalescing;
+- template interpolation;
+- prototypes/classes/Proxy, automatic `this`, declaration hoisting;
+- variadic/default parameters, array methods and length mutation;
+- for loops; remainder (existing explicit error);
+- file removal/rename/status APIs not needed by this corpus;
+- callback/event/readiness lifetime contract;
+- binary values, arbitrary object coercion, long-lived heap collection.
 
-Fieldmouse is not trying to become all of Node. Implement only the filesystem/process/path behavior that real project build scripts require.
+Add a feature only when a concrete useful helper demonstrates the need, and
+record its exact failing construct and required observable result.
 
-Initial surface:
-- `process.argv`, environment access, and exit status;
-- basic `path` joining/normalization;
-- basic `fs` reads, writes, existence checks, and directory operations;
-- useful errors rather than silent fallbacks for unsupported operations.
+## 4. Runtime packaging boundaries
 
-Add features from real scripts, not from a Node compatibility checklist.
+The current supported host artifact is a compiled Chez program plus generated
+launcher/support library; Chez is a declared runtime dependency. It is not one
+self-contained ELF. Executable size/dependencies/startup are measured by
+`tests/measure.mjs`. Runtime acceptance excludes the compiler and Node as
+required dependencies, and proves execution with Petite.
 
-The native text calls above are useful independently, but do not satisfy this Node-facing backlog item.
-
-## 5. Keep Fieldmouse building against current Edriç
-
-Fieldmouse CI is pinned to an older Edriç commit while Catfood follows current Idriç/Edriç development. That creates a compiler-drift trap.
-
-Done when:
-- Fieldmouse is tested against the compiler Catfood actually installs;
-- either the old pin is removed or the reason for retaining it is explicit;
-- compiler incompatibilities fail in CI with a focused diagnostic;
-- a compiler update cannot silently leave Fieldmouse unbuildable.
-
-## 6. Make the Catfood installation contract green
-
-Catfood should be able to feed Fieldmouse into a fresh environment and leave a runnable stable command behind.
-
-Done when:
-- Catfood clones the `edric-rewrite` line;
-- the required Edriç compiler is available or bootstrapped;
-- `fieldmouse.ipkg` builds;
-- a small interpreter smoke test passes;
-- `fieldmouse` is available from Catfood's stable `bin` directory.
-
-Catfood PR #11 is the current integration attempt.
-
-## 7. Build a real-world JavaScript fixture corpus
-
-Tiny parser tests are not enough to tell whether Fieldmouse can replace Node for the build-script jobs we actually care about.
-
-Add a fixture directory containing small, legal-to-copy scripts representative of real project work:
-- argument parsing;
-- filesystem traversal;
-- JSON-ish data manipulation once objects/arrays exist;
-- path construction;
-- simple code generation;
-- shell/build orchestration where appropriate.
-
-Each unsupported construct should become a specific compatibility issue rather than a vague "support JavaScript" task.
-
-## 8. Preserve the default-branch transition
-
-The Edriç rewrite is now on `master`, while the old C implementation remains recoverable from Git history. Keep the active implementation visible at the repository root and do not restore the old MuJS directory layout as compatibility work grows.
+Android packaging/ABI qualification and physical A1/C67 behavior remain separate
+deployment work. Host execution does not establish phone installation or launch.

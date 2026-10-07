@@ -53,6 +53,16 @@ memory_host _ = pure (Left "memory host does not implement this request")
 wrong_response_host : Host
 wrong_response_host _ = pure (Right done_response)
 
+script_host : Host
+script_host arguments_request = pure (Right (texts_response ["first", "two words"]))
+script_host (environment_request "EMPTY") = pure (Right (optional_text_response (Just "")))
+script_host (environment_request _) = pure (Right (optional_text_response Nothing))
+script_host (list_directory_request "virtual") = pure (Right (texts_response ["a", "b"]))
+script_host (create_directory_request "new") = pure (Right done_response)
+script_host (subprocess_request "tool" ["literal"]) = pure (Right (process_response 7 "child"))
+script_host (exit_request _) = pure (Right done_response)
+script_host _ = pure (Left "injected host refusal")
+
 covering
 assert_rejected : String -> String -> IO ()
 assert_rejected name source = do
@@ -137,4 +147,122 @@ main = do
     wrong_response_host
     "console.log(readText(\"virtual\"));"
 
-  putStrLn "20 Field Mouse contract tests passed"
+  assert_run "array literals, length, missing slots, nested indexing"
+    "var xs ← [10, [20, 30]]; console.log(xs.length, xs[1][0], xs[8]);"
+    ["2.0 20.0 undefined"]
+
+  assert_run "array aliases share mutation and growth"
+    "var xs ← [10, 20, 30]; var alias ← xs; xs[1] ← 99; 7 → alias[4]; console.log(xs[1], xs.length, alias[4], xs[3], xs ≟ alias);"
+    ["99.0 5.0 7.0 undefined true"]
+
+  assert_run "object reads and writes use one identity"
+    "var person ← {name: \"Ada\", age: 36, child: {n: 1}}; var other ← person; other.age ← 37; person[\"name\"] ← \"Grace\"; person.child.n ← 2; console.log(person.name, person[\"age\"], other.child.n, person.missing);"
+    ["Grace 37.0 2.0 undefined"]
+
+  assert_run "literal expressions evaluate left to right and last duplicate wins"
+    "var i ← 0; var x ← {a: (i ← i + 1), a: (i ← i + 1)}; console.log(x.a, i);"
+    ["2.0 2.0"]
+
+  assert_run "user calls, parameters, local binding and return"
+    "var x ← 8; function twice(x) { var local ← x * 2; return local; console.log(\"unreachable\"); } console.log(twice(3), x);"
+    ["6.0 8.0"]
+
+  assert_run "lexical capture is not caller scope"
+    "var x ← 10; function f() { return x; } function g(x) { return f(); } x ← 11; console.log(g(99));"
+    ["11.0"]
+
+  assert_run "returned closures retain shared local cells"
+    "function counter() { var n ← 0; return function() { n ← n + 1; return n; }; } var f ← counter(); console.log(f(), f());"
+    ["1.0 2.0"]
+
+  assert_run "functions accept and mutate structured values"
+    "function change(xs, obj) { xs[0] ← obj.n; obj.n ← obj.n + 1; return xs; } var xs ← [0]; var obj ← {n: 7}; var result ← change(xs, obj); console.log(result[0], obj.n, xs ≟ result);"
+    ["7.0 8.0 true"]
+
+  assert_run "ordinary property and chained calls"
+    "var ops ← {twice: function(x) { return x * 2; }}; console.log(ops.twice(4), ops[\"twice\"](5));"
+    ["8.0 10.0"]
+
+  assert_run "native values can be passed through ordinary calls"
+    "var log ← console.log; function apply(f, x) { return f(x); } apply(log, \"hello\");"
+    ["hello"]
+
+  assert_run "self recursion uses the declared binding"
+    "function sum(n) { if (n = 0) return 0; return n + sum(n - 1); } console.log(sum(4));"
+    ["10.0"]
+
+  assert_run "JSON parses all required primitive kinds"
+    "var x ← parseJson(\"[null,true,false,12.5,\\\"text\\\"]\"); console.log(x[0], x[1], x[2], x[3], x[4]);"
+    ["null true false 12.5 text"]
+
+  assert_run "JSON structured round trip"
+    "var x ← {a: [1, {b: \"line\\nnext\"}], ok: Ø}; var y ← parseJson(stringifyJson(x)); console.log(y.a[1].b, y.ok);"
+    ["line\nnext false"]
+
+  assert_run "JSON repeated references are not cycles"
+    "var x ← {n: 1}; var y ← parseJson(stringifyJson([x, x])); console.log(y[0].n, y[1].n);"
+    ["1.0 1.0"]
+
+  assert_run "JSON array holes serialize as null"
+    "var xs ← []; xs[2] ← 3; console.log(stringifyJson(xs));"
+    ["[null,null,3.0]"]
+
+  assert_run "JSON Unicode escapes and surrogate pairs"
+    "var x ← parseJson(\"[\\\"\\\\u00e9\\\",\\\"\\\\ud83d\\\\ude00\\\"]\"); console.log(x[0], x[1]);"
+    ["é 😀"]
+  assert_run "JSON exponent numbers and last duplicate key"
+    "var x ← parseJson(\"{\\\"n\\\":1e2,\\\"n\\\":-2.5e1}\"); console.log(x.n);"
+    ["-25.0"]
+
+  assert_run "deterministic lexical paths"
+    "console.log(joinPath(\"a\", \"b\", \"..\", \"c\"), normalizePath(\"/a/../b//.\"), joinPath(\"\", \"a\"), basename(\"/a/b.txt\"), dirname(\"/a/b.txt\"), normalizePath(\"../../a\"));"
+    ["a/c /b a b.txt /a ../../a"]
+
+  assert_run_with_host "argv, environment, directory and process responses stay typed"
+    script_host
+    "var args ← arguments(); var names ← listDirectory(\"virtual\"); createDirectory(\"new\"); var child ← subprocess(\"tool\", [\"literal\"]); console.log(args[1], names.length, environment(\"EMPTY\") ≟ \"\", environment(\"MISSING\"), child.status, child.stdout);"
+    ["two words 2.0 true undefined 7.0 child"]
+  assert_run_with_host "exit stops later effects"
+    script_host
+    "console.log(\"before\"); exit(0); readText(\"refused\");"
+    ["before"]
+  assert_rejected_with_host "directory response must match"
+    wrong_response_host "listDirectory(\"virtual\");"
+  assert_rejected_with_host "process response must match"
+    wrong_response_host "subprocess(\"tool\", []);"
+  assert_rejected_with_host "host failure propagates"
+    script_host "readText(\"refused\");"
+
+  assert_rejected "array negative indices are explicit errors" "var x ← [1]; x[-1] ← 2;"
+  assert_rejected "array length mutation is deliberately unsupported" "var x ← []; x.length ← 3;"
+  assert_rejected "null property access fails" "console.log(null.x);"
+  assert_rejected "primitive property mutation fails" "var x ← 2; x.a ← 3;"
+  assert_rejected "locals do not leak" "function f() { var onlyHere ← 1; } f(); console.log(onlyHere);"
+  assert_rejected "function arguments have checked arity" "function f(x) { return x; } f();"
+  assert_rejected "nonfunction calls fail" "var x ← 2; x();"
+  assert_rejected "return outside a function fails" "return 2;"
+  assert_rejected "duplicate parameters fail" "function f(x, x) { return x; }"
+  assert_rejected "malformed function fails before effects" "writeText(\"bad\", \"bad\"); function f(x) { return [1,; }"
+  assert_rejected "malformed array fails" "var x ← [1,];"
+  assert_rejected "malformed object fails" "var x ← {a 1};"
+  assert_rejected "malformed JSON fails" "parseJson(\"{bad}\");"
+  assert_rejected "JSON trailing data fails" "parseJson(\"null true\");"
+  assert_rejected "JSON leading zero fails" "parseJson(\"01\");"
+  assert_rejected "JSON undefined fails" "parseJson(\"undefined\");"
+  assert_rejected "JSON trailing comma fails" "parseJson(\"[1,]\");"
+  assert_rejected "JSON invalid escape fails" "parseJson(\"\\\"\\\\q\\\"\");"
+  assert_rejected "JSON unescaped newline fails" "parseJson(\"\\\"line\\nnext\\\"\");"
+  assert_rejected "JSON unpaired surrogate fails" "parseJson(\"\\\"\\\\ud800\\\"\");"
+  assert_rejected "JSON missing fraction digits fails" "parseJson(\"1.\");"
+  assert_rejected "JSON missing exponent digits fails" "parseJson(\"1e\");"
+  assert_rejected "JSON cycle fails" "var x ← {}; x.self ← x; stringifyJson(x);"
+  assert_rejected "JSON functions fail" "stringifyJson(function() { return 1; });"
+  assert_rejected "JSON nonfinite values fail" "stringifyJson(1 / 0);"
+  assert_rejected "invalid path argument fails" "joinPath(\"a\", 2);"
+  assert_rejected "invalid environment name fails" "environment(\"A=B\");"
+  assert_rejected "invalid directory arguments fail" "listDirectory(2);"
+  assert_rejected "invalid subprocess arguments fail" "subprocess(\"echo\", [2]);"
+  assert_rejected "invalid exit status fails" "exit(2.5);"
+  assert_rejected "deliberate failing status is not success" "exit(7);"
+
+  putStrLn "Field Mouse language and structured-runtime tests passed"

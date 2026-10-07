@@ -1,0 +1,9 @@
+var args ← arguments();
+if (args.length ≠ 3) exit(64);
+var count ← parseJson(args[1]);
+function line(name) { return "hello " + name + "\n"; }
+var result ← "";
+var i ← 0;
+while (i < count) { result ← result + line(args[0]); i ← i + 1; }
+writeText(args[2], result);
+console.log("generated");

@@ -1,0 +1,8 @@
+var args ← arguments();
+if (args.length ≠ 1) exit(64);
+var result ← subprocess("/usr/bin/printf", ["%s", args[0]]);
+if (result.status ≠ 0) exit(70);
+writeText("child.txt", result.stdout);
+var bad ← subprocess("/usr/bin/false", []);
+if (bad.status = 0) exit(71);
+console.log("child success and failure checked");

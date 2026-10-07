@@ -1,0 +1,10 @@
+var args ← arguments();
+if (args.length ≠ 2) exit(64);
+var names ← listDirectory(args[0]);
+createDirectory("out");
+function entry(name) { return name + ": " + readText(joinPath(args[0], name)) + "\n"; }
+var result ← "";
+var i ← 0;
+while (i < names.length) { result ← result + entry(names[i]); i ← i + 1; }
+writeText(joinPath("out", args[1]), result);
+console.log(basename(joinPath("out", args[1])));
