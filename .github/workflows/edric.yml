@@ -14,7 +14,7 @@ jobs:
       matrix:
         edric:
           - name: pinned
-            ref: ff4d852862a3942592f8ade9afde8d409d9803be
+            ref: 94dfd99bd3e376507fedc8611053b7173b2519f0
           - name: current
             ref: Idriç
 
