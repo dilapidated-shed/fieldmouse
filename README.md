@@ -105,10 +105,11 @@ contract rather than being hidden inside synchronous requests.
 ## Build, installation, and acceptance
 
 CI tests the reproducible full-SHA pin
-`ff4d852862a3942592f8ade9afde8d409d9803be` and exact resolved current Idriç.
+`94dfd99bd3e376507fedc8611053b7173b2519f0` and exact resolved current Idriç.
 The older `61970be77769f607cca8650bf424c0f0b22ddee7` predates the current
-Number/Text/Unicode-equality surface and is replaced. Both refs currently resolve
-to the same revision; later compiler drift remains independently checked.
+Number/Text/Unicode-equality surface and is replaced. The pinned compiler also
+accepts `÷` in the evaluator's Idriç arithmetic; Field Mouse source syntax keeps
+its existing `/` operator. Later compiler drift remains independently checked.
 
 ```text
 idris2 --build fieldmouse.ipkg

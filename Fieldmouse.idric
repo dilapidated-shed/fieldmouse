@@ -683,7 +683,7 @@ calculate_numeric : binary_operator -> Double -> Double -> Either String value
 calculate_numeric binary_add left right = Right (number_value (left + right))
 calculate_numeric binary_subtract left right = Right (number_value (left - right))
 calculate_numeric binary_multiply left right = Right (number_value (left * right))
-calculate_numeric binary_divide left right = Right (number_value (left / right))
+calculate_numeric binary_divide left right = Right (number_value (left ÷ right))
 calculate_numeric binary_remainder left right = Left "remainder is not implemented yet"
 calculate_numeric binary_less left right = Right (boolean_value (left < right))
 calculate_numeric binary_less_equal left right = Right (boolean_value (left <= right))
