@@ -1,0 +1,84 @@
+ok: empty program has no output
+ok: empty log lines retain their position
+ok: aliased logging preserves nested call and loop order
+ok: exit preserves all prior log lines in order
+ok: runtime failure after logs still fails the complete result
+ok: empty and singleton arrays preserve length and absent slots
+ok: array construction preserves effect order and distinct identities
+ok: JSON arrays retain nested identities through later growth
+ok: object duplicate replacement preserves first key position
+ok: multiplication binds before addition
+ok: left arrow assigns toward the name
+ok: right arrow assigns toward the name
+ok: equals compares rather than assigns
+ok: not equals is the inequality relation
+ok: questioned equals is strict
+ok: empty set is false
+ok: loop state survives its block
+ok: comments and escaped strings are preserved
+ok: single equals compares without assigning
+ok: JavaScript declaration assignment is not Field Mouse
+ok: JavaScript equality spelling is not Field Mouse
+ok: false is spelled with the empty set
+ok: left arrow requires a name on the left
+ok: right arrow requires a name on the right
+ok: unknown variables are runtime errors
+ok: unsupported remainder is an explicit error
+ok: unterminated strings are lexical errors
+ok: native effects go through an injected host
+ok: host responses must match their requests
+ok: array literals, length, missing slots, nested indexing
+ok: array aliases share mutation and growth
+ok: object reads and writes use one identity
+ok: literal expressions evaluate left to right and last duplicate wins
+ok: user calls, parameters, local binding and return
+ok: lexical capture is not caller scope
+ok: returned closures retain shared local cells
+ok: functions accept and mutate structured values
+ok: ordinary property and chained calls
+ok: native values can be passed through ordinary calls
+ok: self recursion uses the declared binding
+ok: JSON parses all required primitive kinds
+ok: JSON structured round trip
+ok: JSON repeated references are not cycles
+ok: JSON array holes serialize as null
+ok: JSON Unicode escapes and surrogate pairs
+ok: JSON exponent numbers and last duplicate key
+ok: deterministic lexical paths
+ok: argv, environment, directory and process responses stay typed
+ok: exit stops later effects
+ok: directory response must match
+ok: process response must match
+ok: host failure propagates
+ok: array negative indices are explicit errors
+ok: array length mutation is deliberately unsupported
+ok: null property access fails
+ok: primitive property mutation fails
+ok: locals do not leak
+ok: function arguments have checked arity
+ok: nonfunction calls fail
+ok: return outside a function fails
+ok: duplicate parameters fail
+ok: malformed function fails before effects
+ok: malformed array fails
+ok: malformed object fails
+ok: malformed JSON fails
+ok: JSON trailing data fails
+ok: JSON leading zero fails
+ok: JSON undefined fails
+ok: JSON trailing comma fails
+ok: JSON invalid escape fails
+ok: JSON unescaped newline fails
+ok: JSON unpaired surrogate fails
+ok: JSON missing fraction digits fails
+ok: JSON missing exponent digits fails
+ok: JSON cycle fails
+ok: JSON functions fail
+ok: JSON nonfinite values fail
+ok: invalid path argument fails
+ok: invalid environment name fails
+ok: invalid directory arguments fail
+ok: invalid subprocess arguments fail
+ok: invalid exit status fails
+ok: deliberate failing status is not success
+Field Mouse language and structured-runtime tests passed

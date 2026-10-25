@@ -27,4 +27,14 @@ arguments; the pinned compiler rejected its missing Show instance. Corrected
 to the supported `the Double (cast index)`. The compiler also attempted code
 generation after that error; that diagnostic is not a benchmark result.
 Compiler revisions, execution commands, and results are recorded in
-`reviews/refactor-2026-10/acceptance.md` once actually exercised.
+`reviews/refactor-2026-10/acceptance.md`. The corrected driver compiled and all
+40 measured executions passed. No missing Idriç capability blocked this driver;
+no language change or fallback was needed. The source-type mistake above is not
+a language deficiency. The explicit `covering` contract follows the interpreter
+it invokes rather than promising termination for arbitrary source.
+
+The accompanying `.fm` file exercises the interpreter's own dialect through the
+CLI. Its hand-specified expected output is checked by the existing ai-ci
+executable; it is not another implementation of the language. It covers nested
+calls, alias identity, sparse growth, JSON, object duplicate order and deliberate
+exit. Reversed/dropped/altered output controls demonstrate checker sensitivity.

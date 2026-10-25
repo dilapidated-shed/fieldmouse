@@ -160,6 +160,11 @@ and physical acceptance remain separate from Linux host-runtime evidence.
 
 ## Layout and license
 
+The [October architectural review](reviews/refactor-2026-10/inventory.md)
+records the source inventory, ranked candidates, decisions, measurements and
+acceptance for the focused runtime refactors. Larger proposed changes remain
+explicitly deferred there.
+
 `Fieldmouse.idric` owns the model, parser, evaluator, pure data operations, and
 closed host. `Main.idric` owns CLI execution; `Tests.idric` owns language and
 injected-host checks. Package files and CI retain the build path.

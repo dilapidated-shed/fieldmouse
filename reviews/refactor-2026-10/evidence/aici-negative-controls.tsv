@@ -1,0 +1,4 @@
+mutation	exit_code	diagnostic
+reverse-lines	1	AICI-FIELDMOUSE-OBSERVABLE
+drop-blank	1	AICI-FIELDMOUSE-OBSERVABLE
+wrong-array-member	1	AICI-FIELDMOUSE-OBSERVABLE
