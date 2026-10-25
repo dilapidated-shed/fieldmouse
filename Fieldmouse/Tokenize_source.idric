@@ -1,6 +1,6 @@
 module Fieldmouse.Tokenize_source
 
-import Data.String
+import Data.Text
 import Data.List
 import Data.Maybe
 import Data.List1
@@ -9,14 +9,14 @@ import Fieldmouse.Language_types
 -- Covering preserves the interpreter's deliberate recursion contract.
 %default covering
 
-identifier_start : Char -> Bool
-identifier_start character =
-  isAlpha character || character == '_' || character == '$'
+character_can_start_identifier : Char → Bool
+character_can_start_identifier character =
+  isAlpha character || character ≟ '_' || character ≟ '$'
 
-identifier_rest : Char -> Bool
-identifier_rest character = identifier_start character || isDigit character
+character_can_continue_identifier : Char → Bool
+character_can_continue_identifier character = character_can_start_identifier character || isDigit character
 
-take_while : (Char -> Bool) -> List Char -> (List Char, List Char)
+take_while : (Char → Bool) → List Char → (List Char, List Char)
 take_while predicate [] = ([], [])
 take_while predicate input@(character :: rest) =
   if predicate character
@@ -24,92 +24,92 @@ take_while predicate input@(character :: rest) =
           in (character :: taken, remaining)
     else ([], input)
 
-drop_line_comment : List Char -> List Char
+drop_line_comment : List Char → List Char
 drop_line_comment [] = []
 drop_line_comment ('\n' :: rest) = rest
 drop_line_comment (_ :: rest) = drop_line_comment rest
 
-drop_block_comment : List Char -> Either String (List Char)
+drop_block_comment : List Char → Either Text (List Char)
 drop_block_comment [] = Left "unterminated block comment"
 drop_block_comment ('*' :: '/' :: rest) = Right rest
 drop_block_comment (_ :: rest) = drop_block_comment rest
 
-read_string : Char -> List Char -> List Char -> Either String (String, List Char)
-read_string quote collected [] = Left "unterminated string"
-read_string quote collected (character :: rest) =
-  if character == quote
+read_quoted_source_text : Char → List Char → List Char → Either Text (Text, List Char)
+read_quoted_source_text quote collected [] = Left "unterminated string"
+read_quoted_source_text quote collected (character :: rest) =
+  if character ≟ quote
     then Right (pack (reverse collected), rest)
     else case character of
-      '\\' => case rest of
-        [] => Left "unterminated string escape"
-        'n' :: after => read_string quote ('\n' :: collected) after
-        'r' :: after => read_string quote ('\r' :: collected) after
-        't' :: after => read_string quote ('\t' :: collected) after
-        '\\' :: after => read_string quote ('\\' :: collected) after
-        '\'' :: after => read_string quote ('\'' :: collected) after
-        '"' :: after => read_string quote ('"' :: collected) after
-        escaped :: after => read_string quote (escaped :: collected) after
-      _ => read_string quote (character :: collected) rest
+      '\\' ⇒ case rest of
+        [] ⇒ Left "unterminated string escape"
+        'n' :: after ⇒ read_quoted_source_text quote ('\n' :: collected) after
+        'r' :: after ⇒ read_quoted_source_text quote ('\r' :: collected) after
+        't' :: after ⇒ read_quoted_source_text quote ('\t' :: collected) after
+        '\\' :: after ⇒ read_quoted_source_text quote ('\\' :: collected) after
+        '\'' :: after ⇒ read_quoted_source_text quote ('\'' :: collected) after
+        '"' :: after ⇒ read_quoted_source_text quote ('"' :: collected) after
+        escaped :: after ⇒ read_quoted_source_text quote (escaped :: collected) after
+      _ ⇒ read_quoted_source_text quote (character :: collected) rest
 
-read_number : Char -> List Char -> (String, List Char)
-read_number first rest =
+read_source_number : Char → List Char → (Text, List Char)
+read_source_number first rest =
   let (integer_digits, after_integer) = take_while isDigit rest in
   case after_integer of
-    '.' :: after_dot =>
+    '.' :: after_dot ⇒
       let (fraction_digits, remaining) = take_while isDigit after_dot in
       (pack ((first :: integer_digits) ++ ('.' :: fraction_digits)), remaining)
-    _ => (pack (first :: integer_digits), after_integer)
+    _ ⇒ (pack (first :: integer_digits), after_integer)
 
 public export
-lex : String -> Either String (List token)
-lex source = lex_characters (unpack source)
+tokenize_source : Text → Either Text (List token)
+tokenize_source source = lex_characters (unpack source)
   where
-    lex_characters : List Char -> Either String (List token)
+    lex_characters : List Char → Either Text (List token)
     lex_characters [] = Right []
     lex_characters ('/' :: '/' :: rest) = lex_characters (drop_line_comment rest)
     lex_characters ('/' :: '*' :: rest) = do
-      remaining <- drop_block_comment rest
+      remaining ← drop_block_comment rest
       lex_characters remaining
     lex_characters ('=' :: '=' :: '=' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token "===" :: tokens)
     lex_characters ('!' :: '=' :: '=' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token "!==" :: tokens)
     lex_characters ('=' :: '=' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token "==" :: tokens)
     lex_characters ('!' :: '=' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token "!=" :: tokens)
     lex_characters ('<' :: '=' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token "<=" :: tokens)
     lex_characters ('>' :: '=' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token ">=" :: tokens)
     lex_characters ('&' :: '&' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token "&&" :: tokens)
     lex_characters ('|' :: '|' :: rest) = do
-      tokens <- lex_characters rest
+      tokens ← lex_characters rest
       Right (symbol_token "||" :: tokens)
     lex_characters (character :: rest) =
-      if character == '\'' || character == '"'
+      if character ≟ '\'' || character ≟ '"'
         then do
-          (text, remaining) <- read_string character [] rest
-          tokens <- lex_characters remaining
+          (text, remaining) ← read_quoted_source_text character [] rest
+          tokens ← lex_characters remaining
           Right (text_token text :: tokens)
         else if isSpace character
           then lex_characters rest
           else if isDigit character
-            then let (text, remaining) = read_number character rest in do
-              tokens <- lex_characters remaining
+            then let (text, remaining) = read_source_number character rest in do
+              tokens ← lex_characters remaining
               Right (number_token text :: tokens)
-            else if identifier_start character
-              then let (more, remaining) = take_while identifier_rest rest in do
-                tokens <- lex_characters remaining
+            else if character_can_start_identifier character
+              then let (more, remaining) = take_while character_can_continue_identifier rest in do
+                tokens ← lex_characters remaining
                 Right (word_token (pack (character :: more)) :: tokens)
               else do
-                tokens <- lex_characters rest
+                tokens ← lex_characters rest
                 Right (symbol_token (pack [character]) :: tokens)

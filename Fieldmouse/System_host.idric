@@ -1,6 +1,6 @@
 module Fieldmouse.System_host
 
-import Data.String
+import Data.Text
 import Data.List
 import Data.Maybe
 import Data.List1
@@ -12,45 +12,45 @@ import Fieldmouse.Host_interface
 -- Covering preserves the interpreter's deliberate recursion contract.
 %default covering
 
-file_problem : String -> String -> FileError -> String
-file_problem operation path problem =
+describe_file_operation_failure : Text → Text → FileError → Text
+describe_file_operation_failure operation path problem =
   operation ++ " '" ++ path ++ "': " ++ show problem
 export
-file_host : List Text → Host
-file_host arguments (read_text_request path) = do
+execute_system_request : List Text → Host
+execute_system_request arguments (read_text_request path) = do
   result ← readFile path
   pure (case result of
-    Left problem ⇒ Left (file_problem "readText" path problem)
+    Left problem ⇒ Left (describe_file_operation_failure "readText" path problem)
     Right text ⇒ Right (text_response text))
-file_host arguments (write_text_request path contents) = do
+execute_system_request arguments (write_text_request path contents) = do
   result ← writeFile path contents
   pure (case result of
-    Left problem ⇒ Left (file_problem "writeText" path problem)
+    Left problem ⇒ Left (describe_file_operation_failure "writeText" path problem)
     Right () ⇒ Right done_response)
-file_host arguments (append_text_request path contents) = do
+execute_system_request arguments (append_text_request path contents) = do
   result ← appendFile path contents
   pure (case result of
-    Left problem ⇒ Left (file_problem "appendText" path problem)
+    Left problem ⇒ Left (describe_file_operation_failure "appendText" path problem)
     Right () ⇒ Right done_response)
-file_host arguments (file_exists_request path) = do
+execute_system_request arguments (file_exists_request path) = do
   found ← exists path
   pure (Right (boolean_response found))
-file_host arguments arguments_request = pure (Right (texts_response arguments))
-file_host arguments (environment_request name) = do
+execute_system_request arguments arguments_request = pure (Right (texts_response arguments))
+execute_system_request arguments (environment_request name) = do
   text ← getEnv name
   pure (Right (optional_text_response text))
-file_host arguments (list_directory_request path) = do
+execute_system_request arguments (list_directory_request path) = do
   result ← listDir path
   pure (case result of
-    Left problem ⇒ Left (file_problem "listDirectory" path problem)
+    Left problem ⇒ Left (describe_file_operation_failure "listDirectory" path problem)
     Right names ⇒ Right (texts_response (sort names)))
-file_host arguments (create_directory_request path) = do
+execute_system_request arguments (create_directory_request path) = do
   result ← createDir path
   pure (case result of
-    Left problem ⇒ Left (file_problem "createDirectory" path problem)
+    Left problem ⇒ Left (describe_file_operation_failure "createDirectory" path problem)
     Right () ⇒ Right done_response)
-file_host arguments (exit_request _) = pure (Right done_response)
-file_host arguments (subprocess_request program parameter_names) = do
+execute_system_request arguments (exit_request _) = pure (Right done_response)
+execute_system_request arguments (subprocess_request program parameter_names) = do
   -- The inherited escaped process adapter quotes every argv element.
   -- stdout is captured; stderr is inherited. No shell source is accepted.
   (text, status) ← System.Escaped.run (program :: parameter_names)

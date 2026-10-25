@@ -1,6 +1,6 @@
 module Fieldmouse.Json_syntax
 
-import Data.String
+import Data.Text
 import Data.List
 import Data.Maybe
 import Data.List1
@@ -16,7 +16,7 @@ choice json_data one_of
   json_text Text
   json_array (List json_data)
   json_object (List (Text, json_data))
-read_matching_json_characters : (Char -> Bool) -> List Char -> (List Char, List Char)
+read_matching_json_characters : (Char → Bool) → List Char → (List Char, List Char)
 read_matching_json_characters predicate [] = ([], [])
 read_matching_json_characters predicate input@(character :: rest) =
   if predicate character
@@ -28,37 +28,51 @@ read_matching_json_characters predicate input@(character :: rest) =
 json_space : Char → Bool
 json_space character = elem character [' ', '\t', '\r', '\n']
 
-hex_value : Char → Maybe Int
-hex_value character =
+hexadecimal_digit_value : Char → Maybe Int
+hexadecimal_digit_value character =
   if character >= '0' && character <= '9' then Just (ord character - ord '0')
   else if character >= 'a' && character <= 'f' then Just (ord character - ord 'a' + 10)
   else if character >= 'A' && character <= 'F' then Just (ord character - ord 'A' + 10)
   else Nothing
 
-read_hex_quad : List Char → Either Text (Int, List Char)
-read_hex_quad (a :: b :: c :: d :: rest) = do
-  av ← maybe (Left "invalid Unicode escape") Right (hex_value a)
-  bv ← maybe (Left "invalid Unicode escape") Right (hex_value b)
-  cv ← maybe (Left "invalid Unicode escape") Right (hex_value c)
-  dv ← maybe (Left "invalid Unicode escape") Right (hex_value d)
-  Right (av * 4096 + bv * 256 + cv * 16 + dv, rest)
-read_hex_quad _ = Left "incomplete Unicode escape"
+read_four_hexadecimal_digits : List Char → Either Text (Int, List Char)
+read_four_hexadecimal_digits (first :: second :: third :: fourth :: rest) = do
+  first_value ← maybe (Left "invalid Unicode escape") Right (hexadecimal_digit_value first)
+  second_value ← maybe (Left "invalid Unicode escape") Right (hexadecimal_digit_value second)
+  third_value ← maybe (Left "invalid Unicode escape") Right (hexadecimal_digit_value third)
+  fourth_value ← maybe (Left "invalid Unicode escape") Right (hexadecimal_digit_value fourth)
+  -- Four base-16 places, from most significant to least significant.
+  Right (first_value * 4096 + second_value * 256 + third_value * 16 + fourth_value, rest)
+read_four_hexadecimal_digits _ = Left "incomplete Unicode escape"
+
+code_unit_is_high_surrogate : Int → Bool
+code_unit_is_high_surrogate code_unit = code_unit >= 55296 && code_unit <= 56319
+
+code_unit_is_low_surrogate : Int → Bool
+code_unit_is_low_surrogate code_unit = code_unit >= 56320 && code_unit <= 57343
+
+read_low_surrogate_after_high : Int → List Char → Either Text (Char, List Char)
+read_low_surrogate_after_high high_surrogate ('\\' :: 'u' :: remaining) = do
+  (low_surrogate, after_low_surrogate) ← read_four_hexadecimal_digits remaining
+  if code_unit_is_low_surrogate low_surrogate then
+    -- UTF-16 combines two ten-bit offsets above the basic multilingual plane.
+    Right (chr (65536 + (high_surrogate - 55296) * 1024 + low_surrogate - 56320), after_low_surrogate)
+    else Left "invalid low surrogate"
+read_low_surrogate_after_high _ _ = Left "high surrogate requires a low surrogate"
+
+read_unicode_escape_character : List Char → Either Text (Char, List Char)
+read_unicode_escape_character input = do
+  (code_unit, remaining) ← read_four_hexadecimal_digits input
+  if code_unit_is_high_surrogate code_unit then read_low_surrogate_after_high code_unit remaining
+    else if code_unit_is_low_surrogate code_unit then Left "unpaired low surrogate"
+      else Right (chr code_unit, remaining)
 
 read_json_string : List Char → List Char → Either Text (Text, List Char)
 read_json_string collected [] = Left "unterminated JSON string"
 read_json_string collected ('"' :: rest) = Right (pack (reverse collected), rest)
 read_json_string collected ('\\' :: 'u' :: rest) = do
-  (first, after_first) ← read_hex_quad rest
-  if first >= 55296 && first <= 56319 then
-    (case after_first of
-      '\\' :: 'u' :: after_escape ⇒ do
-        (second, after_second) ← read_hex_quad after_escape
-        if second >= 56320 && second <= 57343
-          then read_json_string (chr (65536 + (first - 55296) * 1024 + second - 56320) :: collected) after_second
-          else Left "invalid low surrogate"
-      _ ⇒ Left "high surrogate requires a low surrogate")
-    else if first >= 56320 && first <= 57343 then Left "unpaired low surrogate"
-      else read_json_string (chr first :: collected) after_first
+  (decoded_character, remaining) ← read_unicode_escape_character rest
+  read_json_string (decoded_character :: collected) remaining
 read_json_string collected ('\\' :: escaped :: rest) =
   case escaped of
     '"' ⇒ read_json_string ('"' :: collected) rest
@@ -74,8 +88,8 @@ read_json_string collected (character :: rest) =
   if ord character < 32 then Left "unescaped control character"
     else read_json_string (character :: collected) rest
 
-json_number_tail : List Char → List Char → Either Text (Text, List Char)
-json_number_tail whole rest = do
+read_json_fraction_and_exponent : List Char → List Char → Either Text (Text, List Char)
+read_json_fraction_and_exponent whole rest = do
   (fraction, after_fraction) ← the (Either Text (List Char, List Char)) $ case rest of
     '.' :: after_dot ⇒
       let (digits, remaining) = read_matching_json_characters isDigit after_dot in
@@ -108,7 +122,7 @@ read_json_number input = do
               in Right (first :: digits, after_digits)
         else Left "expected JSON value"
     [] ⇒ Left "expected JSON value"
-  (text, remaining) ← json_number_tail (sign ++ whole) rest
+  (text, remaining) ← read_json_fraction_and_exponent (sign ++ whole) rest
   number ← maybe (Left "invalid JSON number") Right (parseDouble text)
   let rendered = toLower (show number)
   if isInfixOf "inf" rendered || isInfixOf "nan" rendered then Left "nonfinite JSON number"

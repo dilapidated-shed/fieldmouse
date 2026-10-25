@@ -1,0 +1,24 @@
+module Public_api
+
+import Fieldmouse
+import System
+
+-- Compatibility of the old facade, including types re-exported by it.
+source : Text
+source = "console.log(7);"
+
+check_source_api : Bool
+check_source_api = case lex source of
+  Left _ ⇒ False
+  Right _ ⇒ case parse source of
+    Left _ ⇒ False
+    Right _ ⇒ render (number_value 7) ≟ "7.0"
+
+covering
+main : IO ()
+main = do
+  if not check_source_api then exitFailure else do
+    result ← run source
+    case result of
+      Right ["7.0"] ⇒ putStrLn "public source API: pass"
+      _ ⇒ exitFailure

@@ -1,6 +1,6 @@
 module Fieldmouse.Language_types
 
-import Data.String
+import Data.Text
 import Data.List
 import Data.Maybe
 import Data.List1
@@ -10,10 +10,10 @@ import Data.List1
 
 public export
 choice token one_of
-  word_token String
-  number_token String
-  text_token String
-  symbol_token String
+  word_token Text
+  number_token Text
+  text_token Text
+  symbol_token Text
 
 public export
 choice unary_operator one_of
@@ -64,7 +64,7 @@ choice value one_of
   null_value
   boolean_value Bool
   number_value Double
-  string_value String
+  string_value Text
   array_value Number
   object_value Number
   function_value Number
@@ -73,11 +73,11 @@ mutual
   public export
   choice expression one_of
     literal_expression value
-    variable_expression String
+    variable_expression Text
     native_call_expression native_function (List expression)
     unary_expression unary_operator expression
     binary_expression binary_operator expression expression
-    assignment_expression String expression
+    assignment_expression Text expression
     array_expression (List expression)
     object_expression (List (Text, expression))
     property_expression expression expression
@@ -87,7 +87,7 @@ mutual
 
   public export
   choice statement one_of
-    define_statement String expression
+    define_statement Text expression
     expression_statement expression
     log_statement (List expression)
     block_statement (List statement)
@@ -95,20 +95,20 @@ mutual
     while_statement expression statement
     return_statement expression
 public export
-unary_operator_text : unary_operator -> String
+unary_operator_text : unary_operator → Text
 unary_operator_text unary_not = "!"
 unary_operator_text unary_negate = "-"
 unary_operator_text unary_positive = "+"
 
 public export
-parse_unary_operator : String -> Maybe unary_operator
+parse_unary_operator : Text → Maybe unary_operator
 parse_unary_operator "!" = Just unary_not
 parse_unary_operator "-" = Just unary_negate
 parse_unary_operator "+" = Just unary_positive
 parse_unary_operator _ = Nothing
 
 public export
-binary_operator_text : binary_operator -> String
+binary_operator_text : binary_operator → Text
 binary_operator_text binary_or = "||"
 binary_operator_text binary_and = "&&"
 binary_operator_text binary_equal = "="
@@ -143,19 +143,19 @@ all_binary_operators =
   ]
 
 export
-matching_binary_operator : String -> List binary_operator -> Maybe binary_operator
+matching_binary_operator : Text → List binary_operator → Maybe binary_operator
 matching_binary_operator text [] = Nothing
 matching_binary_operator text (operator :: rest) =
-  if text == binary_operator_text operator
+  if text ≟ binary_operator_text operator
     then Just operator
     else matching_binary_operator text rest
 
 public export
-parse_binary_operator : String -> Maybe binary_operator
+parse_binary_operator : Text → Maybe binary_operator
 parse_binary_operator text = matching_binary_operator text all_binary_operators
 
 public export
-native_function_text : native_function -> String
+native_function_text : native_function → Text
 native_function_text native_read_text = "readText"
 native_function_text native_write_text = "writeText"
 native_function_text native_append_text = "appendText"
@@ -175,7 +175,7 @@ native_function_text native_dirname = "dirname"
 native_function_text native_log = "console.log"
 
 public export
-parse_native_function : String -> Maybe native_function
+parse_native_function : Text → Maybe native_function
 parse_native_function "readText" = Just native_read_text
 parse_native_function "writeText" = Just native_write_text
 parse_native_function "appendText" = Just native_append_text

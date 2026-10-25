@@ -1,6 +1,6 @@
 module Fieldmouse.Posix_paths
 
-import Data.String
+import Data.Text
 import Data.List
 import Data.Maybe
 import Data.List1
@@ -26,7 +26,7 @@ export
 normalize_path : Text → Text
 normalize_path text =
   let absolute = isPrefixOf "/" text
-      parts = normalize_components absolute [] (forget (Data.String.split (== '/') text))
+      parts = normalize_components absolute [] (forget (Data.Text.split (≟ '/') text))
       result = (if absolute then "/" else "") ++ joinBy "/" parts
    in if result ≟ "" then "." else result
 
@@ -41,7 +41,7 @@ join_path_parts kept (part :: rest) =
 export
 path_basename : Text → Text
 path_basename text =
-  case reverse (filter (/= "") (forget (Data.String.split (== '/') (normalize_path text)))) of
+  case reverse (filter (/= "") (forget (Data.Text.split (≟ '/') (normalize_path text)))) of
     [] ⇒ "/"
     name :: _ ⇒ name
 
@@ -49,7 +49,7 @@ export
 path_dirname : Text → Text
 path_dirname text =
   let normalized = normalize_path text in
-  case reverse (filter (/= "") (forget (Data.String.split (== '/') normalized))) of
+  case reverse (filter (/= "") (forget (Data.Text.split (≟ '/') normalized))) of
     [] ⇒ "/"
     _ :: parents ⇒
       let result = (if isPrefixOf "/" normalized then "/" else "") ++ joinBy "/" (reverse parents)

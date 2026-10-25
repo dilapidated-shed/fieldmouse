@@ -1,6 +1,6 @@
 module Fieldmouse.Host_interface
 
-import Data.String
+import Data.Text
 import Data.List
 import Data.Maybe
 import Data.List1
@@ -10,10 +10,10 @@ import Data.List1
 
 public export
 choice host_request one_of
-  read_text_request String
-  write_text_request String String
-  append_text_request String String
-  file_exists_request String
+  read_text_request Text
+  write_text_request Text Text
+  append_text_request Text Text
+  file_exists_request Text
   arguments_request
   environment_request Text
   list_directory_request Text
@@ -23,7 +23,7 @@ choice host_request one_of
 
 public export
 choice host_response one_of
-  text_response String
+  text_response Text
   boolean_response Bool
   done_response
   texts_response (List Text)
@@ -32,7 +32,7 @@ choice host_response one_of
 
 public export
 Host : Type
-Host = host_request -> IO (Either String host_response)
+Host = host_request → IO (Either Text host_response)
 export
 host_request_name : host_request → Text
 host_request_name (read_text_request _) = "readText"
@@ -47,8 +47,8 @@ host_request_name (exit_request _) = "exit"
 host_request_name (subprocess_request _ _) = "subprocess"
 
 export
-validate_host_text : host_request → Either Text ()
-validate_host_text request =
+check_file_request_text_has_no_nul : host_request → Either Text ()
+check_file_request_text_has_no_nul request =
   let texts : List Text = case request of
         read_text_request path ⇒ [path]
         write_text_request path contents ⇒ [path, contents]

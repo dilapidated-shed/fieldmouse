@@ -2,9 +2,9 @@ module Fieldmouse
 
 import public Fieldmouse.Language_types
 import public Fieldmouse.Host_interface
-import public Fieldmouse.Tokenize_source
-import public Fieldmouse.Parse_source
-import public Fieldmouse.Primitive_values
+import Fieldmouse.Tokenize_source
+import Fieldmouse.Parse_source
+import Fieldmouse.Primitive_values
 import Fieldmouse.Runtime_storage
 import Fieldmouse.Evaluate_program
 import Fieldmouse.System_host
@@ -16,14 +16,13 @@ import Data.Maybe
 public export
 run_command_with_host : Host → Text → IO (Either Text (List Text, Int))
 run_command_with_host host source =
-  case parse source of
+  case parse_program_source source of
     Left problem ⇒ pure (Left problem)
     Right program ⇒ do
-      let (console, with_console) = allocate_object [("log", native_value native_log)] initial_state
-      result ← execute_statements host (bind_local "console" console with_console) program
+      result ← execute_statement_sequence host create_runtime_with_console program
       pure (case result of
         Left problem ⇒ Left problem
-        Right after ⇒ Right (reverse after.output_reversed, fromMaybe 0 after.stopped))
+        Right final_state ⇒ Right (collect_console_output_and_exit_status final_state))
 
 public export
 run_with_host : Host → Text → IO (Either Text (List Text))
@@ -36,8 +35,21 @@ run_with_host host source = do
 
 public export
 run_command : List Text → Text → IO (Either Text (List Text, Int))
-run_command arguments = run_command_with_host (file_host arguments)
+run_command arguments = run_command_with_host (execute_system_request arguments)
 
 public export
 run : Text → IO (Either Text (List Text))
-run = run_with_host (file_host [])
+run = run_with_host (execute_system_request [])
+
+-- Retain the established public API while internal names state their purpose.
+public export
+lex : Text → Either Text (List token)
+lex = tokenize_source
+
+public export
+parse : Text → Either Text (List statement)
+parse = parse_program_source
+
+public export
+render : value → Text
+render = display_value_for_console
