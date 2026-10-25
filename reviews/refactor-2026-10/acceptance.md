@@ -95,6 +95,12 @@ evidence beyond the existing fresh-copy host test.
 
 ## Honest boundary
 
+`publication.tsv` maps every local implementation/receipt commit to its
+published commit and verified identical Git tree. Publication changed commit
+metadata, not file bytes. The local revisions above remain the provenance of
+the executed tests; use the corresponding published revisions to inspect the
+same source on GitHub. This mapping addition changes only review metadata.
+
 The exact implementation revisions above own these local results. Later
 documentation-only commits do not turn this into a receipt for a different
 runtime implementation. Hosted results, when available, must name their own
