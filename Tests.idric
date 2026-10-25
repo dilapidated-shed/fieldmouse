@@ -265,4 +265,11 @@ main = do
   assert_rejected "invalid exit status fails" "exit(2.5);"
   assert_rejected "deliberate failing status is not success" "exit(7);"
 
+  assert_run "redeclaration does not retarget a previously captured cell"
+    "var x ← 1; function saved() { return x; } var x ← 2; x ← 3; console.log(saved(), x);"
+    ["1.0 3.0"]
+  assert_run "separately returned closures share the same local cell"
+    "function pair() { var n ← 0; return {inc: function() { n ← n + 1; }, read: function() { return n; }}; } var p ← pair(); p.inc(); p.inc(); console.log(p.read());"
+    ["2.0"]
+
   putStrLn "Field Mouse language and structured-runtime tests passed"

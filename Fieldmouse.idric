@@ -132,9 +132,6 @@ mutual
     while_statement expression statement
     return_statement expression
 
-Environment : Type
-Environment = List (String, value)
-
 Parser : Type -> Type
 Parser result = List token -> Either String (result, List token)
 
@@ -593,21 +590,6 @@ parse : String -> Either String (List statement)
 parse source = do
   tokens <- lex source
   parse_program_tokens tokens
-
-lookup_variable : String -> Environment -> Either String value
-lookup_variable name [] = Left ("unknown variable '" ++ name ++ "'")
-lookup_variable name ((candidate, found) :: rest) =
-  if name == candidate then Right found else lookup_variable name rest
-
-set_variable : String -> value -> Environment -> Environment
-set_variable name new_value [] = [(name, new_value)]
-set_variable name new_value ((candidate, old_value) :: rest) =
-  if name == candidate
-    then (candidate, new_value) :: rest
-    else (candidate, old_value) :: set_variable name new_value rest
-
-define_variable : String -> value -> Environment -> Environment
-define_variable name new_value environment = (name, new_value) :: environment
 
 public export
 render : value -> String
