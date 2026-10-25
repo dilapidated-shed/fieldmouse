@@ -3,7 +3,7 @@
 Review base: `07720d43eb6f9ec740719f34e29774efa8d34c50`.
 Implementation: `735fe2d` on `refactor/remove-obsolete-environment`.
 
-`publication.tsv` maps the locally tested commits to published commits with
+`environment-publication.tsv` maps the locally tested commits to published commits with
 verified identical Git trees. Only commit metadata differs; all tested file
 bytes are preserved. The mapping itself is review metadata.
 
@@ -51,3 +51,12 @@ The benefit is removal of an obsolete competing account of binding semantics.
 No gotchas update is needed because behavior and verified runtime limits are
 unchanged. Broader architecture and performance work is independently recorded
 on the `refactor/runtime-list-costs` branch in this review directory.
+
+Hosted acceptance passed on published head
+`6dedc9b1824a27f20ff18587502fe4e0722cfc5c` in
+[run 40156418653](https://github.com/dilapidated-shed/fieldmouse/actions/runs/40156418653).
+Both pinned and current lanes completed every check. The current lane resolved
+`0e8cfdd1106ebdeffd01b6c519880ea3afc7dc35` and used the complete bootstrap cache
+keyed to that revision. Logs confirm the actual PR head checkout. This receipt
+belongs to that head; the later receipt filename change avoids a collision
+with the independent runtime-cost PR and changes no executable source.
