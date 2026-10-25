@@ -1,0 +1,107 @@
+module Fieldmouse.Builtin_functions
+
+import Data.String
+import Data.List
+import Data.Maybe
+import Data.List1
+import Fieldmouse.Language_types
+import Fieldmouse.Primitive_values
+import Fieldmouse.Runtime_storage
+import Fieldmouse.Host_interface
+import Fieldmouse.Json_syntax
+import Fieldmouse.Json_runtime_values
+import Fieldmouse.Posix_paths
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+native_arity_problem : native_function → Number → Number → Text
+native_arity_problem native expected actual =
+  native_function_text native ++ ": expected " ++ show expected ++ " argument" ++
+  (if expected ≟ 1 then "" else "s") ++ ", found " ++ show actual
+
+native_request : Runtime → native_function → List value → Either Text host_request
+native_request state native_read_text [string_value path] = Right (read_text_request path)
+native_request state native_write_text [string_value path, string_value contents] = Right (write_text_request path contents)
+native_request state native_append_text [string_value path, string_value contents] = Right (append_text_request path contents)
+native_request state native_file_exists [string_value path] = Right (file_exists_request path)
+native_request state native_arguments [] = Right arguments_request
+native_request state native_environment [string_value name] =
+  if name ≟ "" || any (\c ⇒ c ≟ '=' || c ≟ '\0') (unpack name)
+     then Left "environment: invalid variable name"
+     else Right (environment_request name)
+native_request state native_list_directory [string_value path] = Right (list_directory_request path)
+native_request state native_create_directory [string_value path] = Right (create_directory_request path)
+native_request state native_exit [number_value status] =
+  if status >= 0 && status <= 255 && status == cast (the Int (cast status))
+     then Right (exit_request (cast status))
+     else Left "exit: status must be an integer from 0 to 255"
+native_request state native_subprocess [string_value program, arguments] = do
+  values ← array_text_values state arguments
+  if program ≟ "" || any (\text ⇒ elem '\0' (unpack text)) (program :: values)
+    then Left "subprocess: empty program or NUL in argument"
+    else Right (subprocess_request program values)
+native_request state native arguments =
+  let expected : Number = case native of
+        native_arguments ⇒ 0
+        native_write_text ⇒ 2
+        native_append_text ⇒ 2
+        native_subprocess ⇒ 2
+        _ ⇒ 1
+   in if length arguments /= expected
+        then Left (native_arity_problem native expected (length arguments))
+        else Left (native_function_text native ++ ": invalid argument types")
+host_response_value : Runtime → host_request → host_response → Either Text (value, Runtime)
+host_response_value state (read_text_request _) (text_response text) = Right (string_value text, state)
+host_response_value state (write_text_request _ _) done_response = Right (undefined_value, state)
+host_response_value state (append_text_request _ _) done_response = Right (undefined_value, state)
+host_response_value state (file_exists_request _) (boolean_response truth) = Right (boolean_value truth, state)
+host_response_value state arguments_request (texts_response texts) = Right (allocate_array (map string_value texts) state)
+host_response_value state (environment_request _) (optional_text_response text) =
+  Right (maybe undefined_value string_value text, state)
+host_response_value state (list_directory_request _) (texts_response texts) =
+  Right (allocate_array (map string_value texts) state)
+host_response_value state (create_directory_request _) done_response = Right (undefined_value, state)
+host_response_value state (exit_request status) done_response = Right (undefined_value, { stopped := Just status } state)
+host_response_value state (subprocess_request _ _) (process_response status text) =
+  Right (allocate_object [("status", number_value (cast status)), ("stdout", string_value text)] state)
+host_response_value state request _ =
+  Left ("host returned wrong response for '" ++ host_request_name request ++ "'")
+invoke_native_active : Host → Runtime → native_function → List value → IO (Either Text (value, Runtime))
+invoke_native_active host state native_log arguments =
+  pure (Right (undefined_value, { output_reversed := joinBy " " (map render arguments) :: state.output_reversed } state))
+invoke_native_active host state native_parse_json [string_value text] =
+  pure (case parse_json_text text of
+    Left problem ⇒ Left ("parseJson: malformed JSON: " ++ problem)
+    Right data_value ⇒ Right (import_json data_value state))
+invoke_native_active host state native_stringify_json [found] =
+  pure (do text ← serialize_json state [] found
+           Right (string_value text, state))
+invoke_native_active host state native_join_path arguments =
+  pure (do parts ← text_values arguments
+           Right (string_value (case parts of
+             [] ⇒ "."
+             first :: rest ⇒ join_path_parts first rest), state))
+invoke_native_active host state native_normalize_path [string_value text] =
+  pure (Right (string_value (normalize_path text), state))
+invoke_native_active host state native_basename [string_value text] =
+  pure (Right (string_value (path_basename text), state))
+invoke_native_active host state native_dirname [string_value text] =
+  pure (Right (string_value (path_dirname text), state))
+invoke_native_active host state native arguments =
+  case native_request state native arguments of
+    Left problem ⇒ pure (Left problem)
+    Right request ⇒ do
+      case validate_host_text request of
+        Left problem ⇒ pure (Left problem)
+        Right () ⇒ do
+          response ← host request
+          pure (case response of
+            Left problem ⇒ Left problem
+            Right found ⇒ host_response_value state request found)
+
+export
+invoke_native : Host → Runtime → native_function → List value → IO (Either Text (value, Runtime))
+invoke_native host state native arguments =
+  if isJust state.stopped then pure (Right (undefined_value, state))
+    else invoke_native_active host state native arguments

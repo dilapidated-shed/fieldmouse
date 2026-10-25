@@ -1,0 +1,56 @@
+module Fieldmouse.Posix_paths
+
+import Data.String
+import Data.List
+import Data.Maybe
+import Data.List1
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+-- Pure POSIX lexical paths; filesystem state and platform services stay in Host.
+normalize_components : Bool → List Text → List Text → List Text
+normalize_components absolute kept [] = reverse kept
+normalize_components absolute kept (part :: rest) =
+  case part of
+    "" ⇒ normalize_components absolute kept rest
+    "." ⇒ normalize_components absolute kept rest
+    ".." ⇒ case kept of
+      previous :: earlier ⇒
+        if previous ≟ ".." then normalize_components absolute (".." :: kept) rest
+          else normalize_components absolute earlier rest
+      [] ⇒ normalize_components absolute (if absolute then [] else [".."]) rest
+    _ ⇒ normalize_components absolute (part :: kept) rest
+
+export
+normalize_path : Text → Text
+normalize_path text =
+  let absolute = isPrefixOf "/" text
+      parts = normalize_components absolute [] (forget (Data.String.split (== '/') text))
+      result = (if absolute then "/" else "") ++ joinBy "/" parts
+   in if result ≟ "" then "." else result
+
+export
+join_path_parts : Text → List Text → Text
+join_path_parts kept [] = normalize_path kept
+join_path_parts kept (part :: rest) =
+  join_path_parts
+    (if isPrefixOf "/" part then part else
+      if part ≟ "" then kept else if kept ≟ "" then part else kept ++ "/" ++ part) rest
+
+export
+path_basename : Text → Text
+path_basename text =
+  case reverse (filter (/= "") (forget (Data.String.split (== '/') (normalize_path text)))) of
+    [] ⇒ "/"
+    name :: _ ⇒ name
+
+export
+path_dirname : Text → Text
+path_dirname text =
+  let normalized = normalize_path text in
+  case reverse (filter (/= "") (forget (Data.String.split (== '/') normalized))) of
+    [] ⇒ "/"
+    _ :: parents ⇒
+      let result = (if isPrefixOf "/" normalized then "/" else "") ++ joinBy "/" (reverse parents)
+       in if result ≟ "" then "." else result

@@ -1,0 +1,196 @@
+module Fieldmouse.Json_syntax
+
+import Data.String
+import Data.List
+import Data.Maybe
+import Data.List1
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+public export
+choice json_data one_of
+  json_null
+  json_boolean Bool
+  json_number Double
+  json_text Text
+  json_array (List json_data)
+  json_object (List (Text, json_data))
+read_matching_json_characters : (Char -> Bool) -> List Char -> (List Char, List Char)
+read_matching_json_characters predicate [] = ([], [])
+read_matching_json_characters predicate input@(character :: rest) =
+  if predicate character
+    then let (taken, remaining) = read_matching_json_characters predicate rest
+          in (character :: taken, remaining)
+    else ([], input)
+
+-- JSON has its own strict scanner; Field Mouse syntax is never accepted as JSON.
+json_space : Char → Bool
+json_space character = elem character [' ', '\t', '\r', '\n']
+
+hex_value : Char → Maybe Int
+hex_value character =
+  if character >= '0' && character <= '9' then Just (ord character - ord '0')
+  else if character >= 'a' && character <= 'f' then Just (ord character - ord 'a' + 10)
+  else if character >= 'A' && character <= 'F' then Just (ord character - ord 'A' + 10)
+  else Nothing
+
+read_hex_quad : List Char → Either Text (Int, List Char)
+read_hex_quad (a :: b :: c :: d :: rest) = do
+  av ← maybe (Left "invalid Unicode escape") Right (hex_value a)
+  bv ← maybe (Left "invalid Unicode escape") Right (hex_value b)
+  cv ← maybe (Left "invalid Unicode escape") Right (hex_value c)
+  dv ← maybe (Left "invalid Unicode escape") Right (hex_value d)
+  Right (av * 4096 + bv * 256 + cv * 16 + dv, rest)
+read_hex_quad _ = Left "incomplete Unicode escape"
+
+read_json_string : List Char → List Char → Either Text (Text, List Char)
+read_json_string collected [] = Left "unterminated JSON string"
+read_json_string collected ('"' :: rest) = Right (pack (reverse collected), rest)
+read_json_string collected ('\\' :: 'u' :: rest) = do
+  (first, after_first) ← read_hex_quad rest
+  if first >= 55296 && first <= 56319 then
+    (case after_first of
+      '\\' :: 'u' :: after_escape ⇒ do
+        (second, after_second) ← read_hex_quad after_escape
+        if second >= 56320 && second <= 57343
+          then read_json_string (chr (65536 + (first - 55296) * 1024 + second - 56320) :: collected) after_second
+          else Left "invalid low surrogate"
+      _ ⇒ Left "high surrogate requires a low surrogate")
+    else if first >= 56320 && first <= 57343 then Left "unpaired low surrogate"
+      else read_json_string (chr first :: collected) after_first
+read_json_string collected ('\\' :: escaped :: rest) =
+  case escaped of
+    '"' ⇒ read_json_string ('"' :: collected) rest
+    '\\' ⇒ read_json_string ('\\' :: collected) rest
+    '/' ⇒ read_json_string ('/' :: collected) rest
+    'b' ⇒ read_json_string ('\b' :: collected) rest
+    'f' ⇒ read_json_string ('\f' :: collected) rest
+    'n' ⇒ read_json_string ('\n' :: collected) rest
+    'r' ⇒ read_json_string ('\r' :: collected) rest
+    't' ⇒ read_json_string ('\t' :: collected) rest
+    _ ⇒ Left "invalid JSON escape"
+read_json_string collected (character :: rest) =
+  if ord character < 32 then Left "unescaped control character"
+    else read_json_string (character :: collected) rest
+
+json_number_tail : List Char → List Char → Either Text (Text, List Char)
+json_number_tail whole rest = do
+  (fraction, after_fraction) ← the (Either Text (List Char, List Char)) $ case rest of
+    '.' :: after_dot ⇒
+      let (digits, remaining) = read_matching_json_characters isDigit after_dot in
+      if null digits then Left "missing fraction digits" else Right ('.' :: digits, remaining)
+    _ ⇒ Right ([], rest)
+  (exponent, remaining) ← the (Either Text (List Char, List Char)) $ case after_fraction of
+    marker :: after_marker ⇒
+      if marker ≟ 'e' || marker ≟ 'E' then do
+        let (sign, after_sign) = the (List Char, List Char) $ case after_marker of
+              '+' :: remaining ⇒ (['+'], remaining)
+              '-' :: remaining ⇒ (['-'], remaining)
+              _ ⇒ ([], after_marker)
+        let (digits, after_digits) = read_matching_json_characters isDigit after_sign
+        if null digits then Left "missing exponent digits"
+          else Right (marker :: (sign ++ digits), after_digits)
+      else Right ([], after_fraction)
+    [] ⇒ Right ([], [])
+  Right (pack (whole ++ fraction ++ exponent), remaining)
+
+read_json_number : List Char → Either Text (json_data, List Char)
+read_json_number input = do
+  let (sign, after_sign) = the (List Char, List Char) $ case input of
+        '-' :: rest ⇒ (['-'], rest)
+        _ ⇒ ([], input)
+  (whole, rest) ← the (Either Text (List Char, List Char)) $ case after_sign of
+    '0' :: rest ⇒ Right (['0'], rest)
+    first :: rest ⇒
+      if first >= '1' && first <= '9'
+        then let (digits, after_digits) = read_matching_json_characters isDigit rest
+              in Right (first :: digits, after_digits)
+        else Left "expected JSON value"
+    [] ⇒ Left "expected JSON value"
+  (text, remaining) ← json_number_tail (sign ++ whole) rest
+  number ← maybe (Left "invalid JSON number") Right (parseDouble text)
+  let rendered = toLower (show number)
+  if isInfixOf "inf" rendered || isInfixOf "nan" rendered then Left "nonfinite JSON number"
+    else Right (json_number number, remaining)
+
+mutual
+  parse_json_value : List Char → Either Text (json_data, List Char)
+  parse_json_value input =
+    case snd (read_matching_json_characters json_space input) of
+      'n' :: 'u' :: 'l' :: 'l' :: rest ⇒ Right (json_null, rest)
+      't' :: 'r' :: 'u' :: 'e' :: rest ⇒ Right (json_boolean True, rest)
+      'f' :: 'a' :: 'l' :: 's' :: 'e' :: rest ⇒ Right (json_boolean False, rest)
+      '"' :: rest ⇒ do
+        (text, remaining) ← read_json_string [] rest
+        Right (json_text text, remaining)
+      '[' :: rest ⇒ do
+        (members, remaining) ← parse_json_array rest
+        Right (json_array members, remaining)
+      '{' :: rest ⇒ do
+        (members, remaining) ← parse_json_object rest
+        Right (json_object members, remaining)
+      rest ⇒ read_json_number rest
+
+  parse_json_array : List Char → Either Text (List json_data, List Char)
+  parse_json_array input =
+    case snd (read_matching_json_characters json_space input) of
+      ']' :: rest ⇒ Right ([], rest)
+      rest ⇒ parse_json_array_member rest
+
+  parse_json_array_member : List Char → Either Text (List json_data, List Char)
+  parse_json_array_member input = do
+    (first, after_first) ← parse_json_value input
+    case snd (read_matching_json_characters json_space after_first) of
+      ']' :: rest ⇒ Right ([first], rest)
+      ',' :: rest ⇒ do
+        (later, remaining) ← parse_json_array_member rest
+        Right (first :: later, remaining)
+      _ ⇒ Left "expected ',' or ']'"
+
+  parse_json_object : List Char → Either Text (List (Text, json_data), List Char)
+  parse_json_object input =
+    case snd (read_matching_json_characters json_space input) of
+      '}' :: rest ⇒ Right ([], rest)
+      rest ⇒ parse_json_object_member rest
+
+  parse_json_object_member : List Char → Either Text (List (Text, json_data), List Char)
+  parse_json_object_member input =
+    case snd (read_matching_json_characters json_space input) of
+      '"' :: rest ⇒ do
+        (key, after_key) ← read_json_string [] rest
+        case snd (read_matching_json_characters json_space after_key) of
+          ':' :: after_colon ⇒ do
+            (first, after_first) ← parse_json_value after_colon
+            case snd (read_matching_json_characters json_space after_first) of
+              '}' :: remaining ⇒ Right ([(key, first)], remaining)
+              ',' :: remaining ⇒ do
+                (later, after_later) ← parse_json_object_member remaining
+                Right ((key, first) :: later, after_later)
+              _ ⇒ Left "expected ',' or '}'"
+          _ ⇒ Left "expected ':'"
+      _ ⇒ Left "expected quoted JSON property"
+
+export
+parse_json_text : Text → Either Text json_data
+parse_json_text text = do
+  (found, rest) ← parse_json_value (unpack text)
+  if null (snd (read_matching_json_characters json_space rest)) then Right found
+    else Left "trailing JSON data"
+hex_digit : Int → Text
+hex_digit digit = pack [chr (if digit < 10 then ord '0' + digit else ord 'a' + digit - 10)]
+
+export
+quote_json : Text → Text
+quote_json text = "\"" ++ concatMap escape_character (unpack text) ++ "\""
+  where
+    escape_character : Char → Text
+    escape_character '"' = "\\\""
+    escape_character '\\' = "\\\\"
+    escape_character '\n' = "\\n"
+    escape_character '\r' = "\\r"
+    escape_character '\t' = "\\t"
+    escape_character character =
+      if ord character < 32
+        then "\\u00" ++ hex_digit (ord character `div` 16) ++ hex_digit (ord character `mod` 16)
+        else pack [character]

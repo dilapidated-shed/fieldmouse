@@ -2,6 +2,6 @@ package fieldmouse
 
 version = 0.1.0
 sourcedir = "."
-modules = Fieldmouse
+modules = Fieldmouse.Language_types, Fieldmouse.Tokenize_source, Fieldmouse.Parse_source, Fieldmouse.Primitive_values, Fieldmouse.Runtime_storage, Fieldmouse.Posix_paths, Fieldmouse.Json_syntax, Fieldmouse.Json_runtime_values, Fieldmouse.Host_interface, Fieldmouse.System_host, Fieldmouse.Builtin_functions, Fieldmouse.Evaluate_program, Fieldmouse
 main = Main
 executable = fieldmouse

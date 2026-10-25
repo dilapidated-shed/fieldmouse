@@ -60,6 +60,7 @@ try {
     const boundary = path.join(temporary, 'boundaries');
     fs.mkdirSync(boundary);
     fs.symlinkSync(path.join(root, 'Fieldmouse.idric'), path.join(boundary, 'Fieldmouse.idric'));
+    fs.symlinkSync(path.join(root, 'Fieldmouse'), path.join(boundary, 'Fieldmouse'), 'dir');
     for (const [fixture, diagnostic] of [
       ['ArbitraryOperator','unary_operator'], ['ArbitraryBinaryOperator','binary_operator'],
       ['ArbitraryNativeCall','native_function'], ['ArbitraryHostRequest','host_request']

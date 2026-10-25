@@ -1,0 +1,110 @@
+module Fieldmouse.Primitive_values
+
+import Data.String
+import Data.List
+import Data.Maybe
+import Data.List1
+import Fieldmouse.Language_types
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+public export
+render : value -> String
+render undefined_value = "undefined"
+render null_value = "null"
+render (boolean_value True) = "true"
+render (boolean_value False) = "false"
+render (number_value number) = show number
+render (string_value text) = text
+render (array_value _) = "[array]"
+render (object_value _) = "[object]"
+render (function_value _) = "[function]"
+render (native_value native) = "[native " ++ native_function_text native ++ "]"
+
+export
+truthy : value -> Bool
+truthy undefined_value = False
+truthy null_value = False
+truthy (boolean_value truth) = truth
+truthy (number_value number) = number /= 0.0
+truthy (string_value text) = text /= ""
+truthy _ = True
+
+export
+number_from_value : value -> Either String Double
+number_from_value (number_value number) = Right number
+number_from_value (boolean_value True) = Right 1.0
+number_from_value (boolean_value False) = Right 0.0
+number_from_value null_value = Right 0.0
+number_from_value (string_value text) =
+  case parseDouble text of
+    Just number => Right number
+    Nothing => Left ("cannot convert '" ++ text ++ "' to number")
+number_from_value undefined_value = Left "cannot convert undefined to number"
+number_from_value _ = Left "cannot convert structured value or function to number"
+
+export
+same_value : value -> value -> Bool
+same_value undefined_value undefined_value = True
+same_value null_value null_value = True
+same_value (boolean_value left) (boolean_value right) = left == right
+same_value (number_value left) (number_value right) = left == right
+same_value (string_value left) (string_value right) = left == right
+same_value (array_value left) (array_value right) = left == right
+same_value (object_value left) (object_value right) = left == right
+same_value (function_value left) (function_value right) = left == right
+same_value (native_value left) (native_value right) = native_function_text left == native_function_text right
+same_value _ _ = False
+
+coercive_equal : value -> value -> Bool
+coercive_equal undefined_value null_value = True
+coercive_equal null_value undefined_value = True
+coercive_equal undefined_value right = same_value undefined_value right
+coercive_equal left undefined_value = same_value left undefined_value
+coercive_equal null_value right = same_value null_value right
+coercive_equal left null_value = same_value left null_value
+coercive_equal (number_value left) (string_value right) =
+  case parseDouble right of
+    Just right_number => left == right_number
+    Nothing => False
+coercive_equal (string_value left) (number_value right) =
+  case parseDouble left of
+    Just left_number => left_number == right
+    Nothing => False
+coercive_equal (boolean_value left) right =
+  case number_from_value right of
+    Right right_number => (if left then 1.0 else 0.0) == right_number
+    Left _ => False
+coercive_equal left (boolean_value right) =
+  case number_from_value left of
+    Right left_number => left_number == (if right then 1.0 else 0.0)
+    Left _ => False
+coercive_equal left right = same_value left right
+
+calculate_numeric : binary_operator -> Double -> Double -> Either String value
+calculate_numeric binary_add left right = Right (number_value (left + right))
+calculate_numeric binary_subtract left right = Right (number_value (left - right))
+calculate_numeric binary_multiply left right = Right (number_value (left * right))
+calculate_numeric binary_divide left right = Right (number_value (left ÷ right))
+calculate_numeric binary_remainder left right = Left "remainder is not implemented yet"
+calculate_numeric binary_less left right = Right (boolean_value (left < right))
+calculate_numeric binary_less_equal left right = Right (boolean_value (left <= right))
+calculate_numeric binary_greater left right = Right (boolean_value (left > right))
+calculate_numeric binary_greater_equal left right = Right (boolean_value (left >= right))
+calculate_numeric operator _ _ =
+  Left
+    ("unsupported numeric operator '" ++
+     binary_operator_text operator ++ "'")
+
+export
+calculate_binary : binary_operator -> value -> value -> Either String value
+calculate_binary binary_add (string_value left) right = Right (string_value (left ++ render right))
+calculate_binary binary_add left (string_value right) = Right (string_value (render left ++ right))
+calculate_binary binary_equal left right = Right (boolean_value (coercive_equal left right))
+calculate_binary binary_not_equal left right = Right (boolean_value (not (coercive_equal left right)))
+calculate_binary binary_strict_equal left right = Right (boolean_value (same_value left right))
+calculate_binary operator left right = do
+  left_number <- number_from_value left
+  right_number <- number_from_value right
+  calculate_numeric operator left_number right_number

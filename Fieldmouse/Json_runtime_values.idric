@@ -1,0 +1,74 @@
+module Fieldmouse.Json_runtime_values
+
+import Data.String
+import Data.List
+import Data.Maybe
+import Data.List1
+import Fieldmouse.Language_types
+import Fieldmouse.Runtime_storage
+import Fieldmouse.Json_syntax
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+mutual
+  export
+  import_json : json_data → Runtime → (value, Runtime)
+  import_json json_null state = (null_value, state)
+  import_json (json_boolean truth) state = (boolean_value truth, state)
+  import_json (json_number number) state = (number_value number, state)
+  import_json (json_text text) state = (string_value text, state)
+  import_json (json_array members) state =
+    let (values, after) = import_json_many members state in allocate_array values after
+  import_json (json_object members) state =
+    let (values, after) = import_json_properties members state
+     in allocate_object values after
+
+  import_json_many : List json_data → Runtime → (List value, Runtime)
+  import_json_many [] state = ([], state)
+  import_json_many (first :: rest) state =
+    let (found, after_first) = import_json first state
+        (later, after_later) = import_json_many rest after_first
+     in (found :: later, after_later)
+
+  import_json_properties : List (Text, json_data) → Runtime → (List (Text, value), Runtime)
+  import_json_properties [] state = ([], state)
+  import_json_properties ((key, first) :: rest) state =
+    let (found, after_first) = import_json first state
+        (later, after_later) = import_json_properties rest after_first
+     in ((key, found) :: later, after_later)
+mutual
+  export
+  serialize_json : Runtime → List Number → value → Either Text Text
+  serialize_json state ancestors null_value = Right "null"
+  serialize_json state ancestors (boolean_value truth) = Right (if truth then "true" else "false")
+  serialize_json state ancestors (number_value number) =
+    let text = show number in
+    if isInfixOf "nan" (toLower text) || isInfixOf "inf" (toLower text)
+      then Left "stringifyJson: nonfinite number"
+      else Right text
+  serialize_json state ancestors (string_value text) = Right (quote_json text)
+  serialize_json state ancestors (array_value identity) = do
+    if elem identity ancestors then Left "stringifyJson: cyclic array" else Right ()
+    contents ← maybe (Left "invalid array identity") Right (lookup_entry identity state.aggregates)
+    members ← serialize_array state (identity :: ancestors) contents 0 (fromMaybe 0 contents.array_length)
+    Right ("[" ++ joinBy "," members ++ "]")
+  serialize_json state ancestors (object_value identity) = do
+    if elem identity ancestors then Left "stringifyJson: cyclic object" else Right ()
+    contents ← maybe (Left "invalid object identity") Right (lookup_entry identity state.aggregates)
+    members ← traverse (serialize_member state (identity :: ancestors)) contents.properties
+    Right ("{" ++ joinBy "," members ++ "}")
+  serialize_json _ _ _ = Left "stringifyJson: undefined and functions are not JSON data"
+
+  serialize_member : Runtime → List Number → (Text, value) → Either Text Text
+  serialize_member state ancestors (key, found) = do
+    text ← serialize_json state ancestors found
+    Right (quote_json key ++ ":" ++ text)
+
+  serialize_array : Runtime → List Number → Aggregate → Number → Number → Either Text (List Text)
+  serialize_array state ancestors contents index size =
+    if index >= size then Right [] else do
+      text ← serialize_json state ancestors
+        (fromMaybe null_value (lookup_entry (show index) contents.properties))
+      later ← serialize_array state ancestors contents (S index) size
+      Right (text :: later)

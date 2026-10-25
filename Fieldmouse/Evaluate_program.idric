@@ -1,0 +1,225 @@
+module Fieldmouse.Evaluate_program
+
+import Data.String
+import Data.List
+import Data.Maybe
+import Data.List1
+import Fieldmouse.Language_types
+import Fieldmouse.Primitive_values
+import Fieldmouse.Runtime_storage
+import Fieldmouse.Host_interface
+import Fieldmouse.Builtin_functions
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+mutual
+  evaluate : Host → Runtime → expression → IO (Either Text (value, Runtime))
+  evaluate host state tree =
+    case state.stopped of
+      Just _ ⇒ pure (Right (undefined_value, state))
+      Nothing ⇒ evaluate_active host state tree
+
+  evaluate_active : Host → Runtime → expression → IO (Either Text (value, Runtime))
+  evaluate_active host state (literal_expression literal) = pure (Right (literal, state))
+  evaluate_active host state (variable_expression name) =
+    case read_binding name state of
+      Right found ⇒ pure (Right (found, state))
+      Left problem ⇒ case parse_native_function name of
+        Just native ⇒ pure (Right (native_value native, state))
+        Nothing ⇒ pure (Left problem)
+  evaluate_active host state (native_call_expression native arguments) = do
+    result ← evaluate_many host state arguments
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (values, after) ⇒ invoke_native host after native values
+  evaluate_active host state (assignment_expression name body) = do
+    result ← evaluate host state body
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (found, after) ⇒ Right (found, write_binding name found after))
+  evaluate_active host state (array_expression members) = do
+    result ← evaluate_many host state members
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (values, after) ⇒ Right (allocate_array values after))
+  evaluate_active host state (object_expression members) = do
+    result ← evaluate_properties host state members
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (values, after) ⇒ Right (allocate_object values after))
+  evaluate_active host state (function_expression parameter_names body) =
+    let identity = state.next_identity
+        captured = CapturedFunction parameter_names body state.bindings
+     in pure (Right (function_value identity,
+          { functions := (identity, captured) :: state.functions, next_identity := S identity } state))
+  evaluate_active host state (property_expression owner key) = do
+    result ← evaluate_many host state [owner, key]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([found, key_value], after) ⇒ do
+        if isJust after.stopped then Right (undefined_value, after) else do
+          name ← key_from_value key_value
+          result ← read_property after found name
+          Right (result, after)
+      _ ⇒ Left "invalid property evaluation")
+  evaluate_active host state (property_assignment owner key body) = do
+    result ← evaluate_many host state [owner, key, body]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([found, key_value, new_value], after) ⇒ do
+        if isJust after.stopped then Right (undefined_value, after) else do
+          name ← key_from_value key_value
+          changed ← write_property after found name new_value
+          Right (new_value, changed)
+      _ ⇒ Left "invalid property assignment")
+  evaluate_active host state (call_expression callee arguments) = do
+    result ← evaluate host state callee
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (function, after_callee) ⇒ do
+        argument_result ← evaluate_many host after_callee arguments
+        case argument_result of
+          Left problem ⇒ pure (Left problem)
+          Right (values, after_arguments) ⇒ invoke host after_arguments function values
+  evaluate_active host state (unary_expression operator body) = do
+    result ← evaluate host state body
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (found, after) ⇒ if isJust after.stopped then Right (undefined_value, after) else case operator of
+        unary_not ⇒ Right (boolean_value (not (truthy found)), after)
+        unary_negate ⇒ do
+          number ← number_from_value found
+          Right (number_value (-number), after)
+        unary_positive ⇒ do
+          number ← number_from_value found
+          Right (number_value number, after))
+  evaluate_active host state (binary_expression binary_and left right) = do
+    result ← evaluate host state left
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if truthy found then evaluate host after right else pure (Right (found, after))
+  evaluate_active host state (binary_expression binary_or left right) = do
+    result ← evaluate host state left
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if truthy found then pure (Right (found, after)) else evaluate host after right
+  evaluate_active host state (binary_expression operator left right) = do
+    result ← evaluate_many host state [left, right]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([left_value, right_value], after) ⇒ do
+        if isJust after.stopped then Right (undefined_value, after) else do
+          answer ← calculate_binary operator left_value right_value
+          Right (answer, after)
+      _ ⇒ Left "invalid binary evaluation")
+
+  evaluate_many : Host → Runtime → List expression → IO (Either Text (List value, Runtime))
+  evaluate_many host state [] = pure (Right ([], state))
+  evaluate_many host state (first :: rest) = do
+    result ← evaluate host state first
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after_first) ⇒ do
+        later ← evaluate_many host after_first rest
+        pure (case later of
+          Left problem ⇒ Left problem
+          Right (values, after) ⇒ Right (found :: values, after))
+
+  evaluate_properties : Host → Runtime → List (Text, expression) → IO (Either Text (List (Text, value), Runtime))
+  evaluate_properties host state [] = pure (Right ([], state))
+  evaluate_properties host state ((key, first) :: rest) = do
+    result ← evaluate host state first
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after_first) ⇒ do
+        later ← evaluate_properties host after_first rest
+        pure (case later of
+          Left problem ⇒ Left problem
+          Right (values, after) ⇒ Right ((key, found) :: values, after))
+
+  invoke : Host → Runtime → value → List value → IO (Either Text (value, Runtime))
+  invoke host state function arguments =
+    if isJust state.stopped then pure (Right (undefined_value, state))
+      else invoke_active host state function arguments
+
+  invoke_active : Host → Runtime → value → List value → IO (Either Text (value, Runtime))
+  invoke_active host state (native_value native) arguments = invoke_native host state native arguments
+  invoke_active host state (function_value identity) arguments =
+    case lookup_entry identity state.functions of
+      Nothing ⇒ pure (Left "invalid function identity")
+      Just captured ⇒
+        if length arguments /= length captured.parameter_names
+          then pure (Left ("function: expected " ++ show (length captured.parameter_names) ++
+                           " arguments, found " ++ show (length arguments)))
+          else if state.call_depth >= 256
+            then pure (Left "function call depth exceeded 256")
+            else do
+              let entered = { bindings := captured.bindings, returned := Nothing,
+                              call_depth := S state.call_depth } state
+              let locals = foldl (\current, pair ⇒ bind_local (fst pair) (snd pair) current)
+                                 entered (zip captured.parameter_names arguments)
+              result ← execute_statements host locals captured.body
+              pure (case result of
+                Left problem ⇒ Left problem
+                Right after ⇒ Right (fromMaybe undefined_value after.returned,
+                  { bindings := state.bindings, returned := state.returned, call_depth := state.call_depth } after))
+  invoke_active _ _ _ _ = pure (Left "called value is not a function")
+  execute_statement : Host → Runtime → statement → IO (Either Text Runtime)
+  execute_statement host state (define_statement name initial) = do
+    -- Reserve the binding before capturing the function: self recursion is free.
+    let reserved = bind_local name undefined_value state
+    result ← evaluate host reserved initial
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (found, after) ⇒ Right (write_binding name found after))
+  execute_statement host state (expression_statement body) = do
+    result ← evaluate host state body
+    pure (map snd result)
+  execute_statement host state (log_statement arguments) = do
+    result ← evaluate_many host state arguments
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (values, after) ⇒ do
+        logged ← invoke_native host after native_log values
+        pure (map snd logged)
+  execute_statement host state (return_statement body) =
+    if state.call_depth ≟ 0 then pure (Left "return outside function") else do
+      result ← evaluate host state body
+      pure (case result of
+        Left problem ⇒ Left problem
+        Right (found, after) ⇒ Right ({ returned := Just found } after))
+  execute_statement host state (block_statement statements) = execute_statements host state statements
+  execute_statement host state (if_statement condition yes_branch no_branch) = do
+    result ← evaluate host state condition
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if isJust after.stopped then pure (Right after) else
+        if truthy found then execute_statement host after yes_branch else
+          case no_branch of
+            Nothing ⇒ pure (Right after)
+            Just branch ⇒ execute_statement host after branch
+  execute_statement host state loop@(while_statement condition body) = do
+    result ← evaluate host state condition
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (found, after) ⇒
+        if isJust after.stopped || not (truthy found) then pure (Right after) else do
+          result ← execute_statement host after body
+          case result of
+            Left problem ⇒ pure (Left problem)
+            Right after_body ⇒
+              if halted after_body then pure (Right after_body) else execute_statement host after_body loop
+
+  export
+  execute_statements : Host → Runtime → List statement → IO (Either Text Runtime)
+  execute_statements host state [] = pure (Right state)
+  execute_statements host state (first :: rest) =
+    if halted state then pure (Right state) else do
+      result ← execute_statement host state first
+      case result of
+        Left problem ⇒ pure (Left problem)
+        Right after ⇒ execute_statements host after rest
