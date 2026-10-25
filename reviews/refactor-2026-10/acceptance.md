@@ -18,7 +18,8 @@ were reused to build the current compiler, which reported
 `Idris 2, version 0.8.0-0e8cfdd11`. Local current-compiler checks use the
 **pinned bundle's libraries and support runtime**, not freshly rebuilt current
 libraries. This is compiler-source compatibility evidence; the existing hosted
-matrix separately bootstraps the entire resolved-current toolchain.
+matrix separately uses the complete toolchain cache keyed to the resolved
+current compiler revision (or bootstraps it on a cache miss).
 
 The first current-compiler invocation failed to resolve the installed `network`
 package. Supplying the observed bootstrap package prefix fixed that dependency
@@ -57,6 +58,19 @@ Reproduction uses the repository commands: `idric --build fieldmouse.ipkg`,
 `sh examples/sample-code/check.sh <command>`. Current builds use a separate
 `--build-dir build-current`; the bundle's existing `idric-env` supplies its
 library paths to the rebuilt compiler and rejection subprocesses.
+
+## Hosted acceptance
+
+Hosted acceptance also passed on published head
+`e4c8122906df56ef42779d386ab002ca439df9b6` in
+[run 40156416776](https://github.com/dilapidated-shed/fieldmouse/actions/runs/40156416776).
+Both pinned and current lanes completed every build, language, example,
+differential, refusal, host and CLI check. The current lane resolved
+`0e8cfdd1106ebdeffd01b6c519880ea3afc7dc35` and restored the matching complete
+bootstrap cache; it did not rebuild the compiler in this run. Logs identify
+the actual PR head checkout, not a synthetic merge ref. This paragraph is
+an immutable receipt for that head; later metadata-only revisions require
+their own current-head workflow result.
 
 ## Independent ai-ci result
 
