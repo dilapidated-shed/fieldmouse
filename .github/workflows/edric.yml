@@ -80,6 +80,9 @@ jobs:
       - name: Run language contract tests
         run: build/exec/fieldmouse-tests
 
+      - name: Check public Field Mouse examples
+        run: sh examples/sample-code/check.sh
+
       - name: Prove helper tasks against Node and reject failures
         env:
           IDRIC: ${{ github.workspace }}/.tools/Idric/build/exec/idris2

@@ -1,0 +1,8 @@
+// JSON uses ordinary JSON "false"; this dialect uses Ø for source false.
+var record ← parseJson("{\"enabled\":false,\"items\":[{\"name\":\"Ada\",\"count\":2}]}");
+if (!(record.enabled ≟ Ø)) exit(50);
+record.items[0].count ← record.items[0].count + 1;
+var copy ← parseJson(stringifyJson(record));
+if (!(copy.items[0].count ≟ 3)) exit(51);
+if (!(copy.items[0].name ≟ "Ada")) exit(52);
+console.log("JSON and nested mutation: pass");

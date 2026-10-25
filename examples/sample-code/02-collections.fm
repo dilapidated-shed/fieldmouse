@@ -1,0 +1,10 @@
+// Arrays/objects preserve identities; aliases see the same mutations.
+var people ← [{name: "Ada", visits: 2}, {name: "Grace", visits: 1}];
+var another ← people;
+another[0].visits ← another[0].visits + 1;
+4 → people[3];
+if (!(people ≟ another)) exit(30);
+if (!(people[0].visits ≟ 3)) exit(31);
+if (!(people.length ≟ 4)) exit(32);
+if (!(people[2] ≟ undefined)) exit(33);
+console.log("collections and aliases: pass");
