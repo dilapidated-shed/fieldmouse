@@ -1,0 +1,22 @@
+PASS compile-time refusal ArbitraryOperator
+PASS compile-time refusal ArbitraryBinaryOperator
+PASS compile-time refusal ArbitraryNativeCall
+PASS compile-time refusal ArbitraryHostRequest
+PASS differential generate case=0 status=0
+PASS differential generate case=1 status=0
+PASS differential directory case=2 status=0
+PASS differential json case=3 status=0
+PASS differential subprocess case=4 status=0
+PASS differential record case=5 status=0
+PASS differential generate case=6 status=64
+PASS failure syntax status=1
+PASS failure runtime status=1
+PASS failure arity status=1
+PASS failure host-argument status=1
+PASS failure host-failure status=1
+PASS failure directory-failure status=1
+PASS failure mkdir-failure status=1
+PASS failure json-failure status=1
+PASS failure exit-status status=23
+PASS fresh stable-bin install: compiler prefix removed, compiled payload only
+PASS missing executable status, exit control, parse-before-effects, CLI failures

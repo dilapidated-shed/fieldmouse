@@ -728,7 +728,8 @@ record Runtime where
   aggregates : List (Number, Aggregate)
   functions : List (Number, Closure)
   next_identity : Number
-  output : List Text
+  -- Prepend while evaluating; restore chronological order only at the run boundary.
+  output_reversed : List Text
   returned : Maybe value
   stopped : Maybe Int
   call_depth : Number
@@ -766,22 +767,29 @@ write_binding name found state =
     Nothing ⇒ bind_local name found state
     Just identity ⇒ { cells := put_entry identity found state.cells } state
 
-allocate_aggregate : Maybe Number → List (Text, value) → Runtime → (value, Runtime)
-allocate_aggregate size members state =
+store_aggregate : Aggregate → Runtime → (value, Runtime)
+store_aggregate contents state =
   let identity = state.next_identity
-      result = case size of
+      result = case contents.array_length of
         Nothing ⇒ object_value identity
         Just _ ⇒ array_value identity
-   in (result, { aggregates := (identity, AggregateContents size
-                   (foldl (\kept, pair ⇒ put_entry (fst pair) (snd pair) kept) [] members)) :: state.aggregates,
+   in (result, { aggregates := (identity, contents) :: state.aggregates,
                  next_identity := S identity } state)
+
+allocate_object : List (Text, value) → Runtime → (value, Runtime)
+allocate_object members =
+  -- Repeated keys keep their first position and their last value.
+  store_aggregate (AggregateContents Nothing
+    (foldl (\kept, pair ⇒ put_entry (fst pair) (snd pair) kept) [] members))
 
 indexed_members : Number → List value → List (Text, value)
 indexed_members index [] = []
 indexed_members index (first :: rest) = (show index, first) :: indexed_members (S index) rest
 
 allocate_array : List value → Runtime → (value, Runtime)
-allocate_array members = allocate_aggregate (Just (length members)) (indexed_members 0 members)
+allocate_array members =
+  -- These canonical sequential keys are unique by construction.
+  store_aggregate (AggregateContents (Just (length members)) (indexed_members 0 members))
 
 key_from_value : value → Either Text Text
 key_from_value (string_value text) = Right text
@@ -1031,7 +1039,7 @@ mutual
     let (values, after) = import_json_many members state in allocate_array values after
   import_json (json_object members) state =
     let (values, after) = import_json_properties members state
-     in allocate_aggregate Nothing values after
+     in allocate_object values after
 
   import_json_many : List json_data → Runtime → (List value, Runtime)
   import_json_many [] state = ([], state)
@@ -1197,7 +1205,7 @@ host_response_value state (list_directory_request _) (texts_response texts) =
 host_response_value state (create_directory_request _) done_response = Right (undefined_value, state)
 host_response_value state (exit_request status) done_response = Right (undefined_value, { stopped := Just status } state)
 host_response_value state (subprocess_request _ _) (process_response status text) =
-  Right (allocate_aggregate Nothing [("status", number_value (cast status)), ("stdout", string_value text)] state)
+  Right (allocate_object [("status", number_value (cast status)), ("stdout", string_value text)] state)
 host_response_value state request _ =
   Left ("host returned wrong response for '" ++ host_request_name request ++ "'")
 
@@ -1278,7 +1286,7 @@ mutual
     result ← evaluate_properties host state members
     pure (case result of
       Left problem ⇒ Left problem
-      Right (values, after) ⇒ Right (allocate_aggregate Nothing values after))
+      Right (values, after) ⇒ Right (allocate_object values after))
   evaluate_active host state (function_expression parameter_names body) =
     let identity = state.next_identity
         captured = CapturedFunction parameter_names body state.bindings
@@ -1406,7 +1414,7 @@ mutual
 
   invoke_native_active : Host → Runtime → native_function → List value → IO (Either Text (value, Runtime))
   invoke_native_active host state native_log arguments =
-    pure (Right (undefined_value, { output := state.output ++ [joinBy " " (map render arguments)] } state))
+    pure (Right (undefined_value, { output_reversed := joinBy " " (map render arguments) :: state.output_reversed } state))
   invoke_native_active host state native_parse_json [string_value text] =
     pure (case parse_json_text text of
       Left problem ⇒ Left ("parseJson: malformed JSON: " ++ problem)
@@ -1499,11 +1507,11 @@ run_command_with_host host source =
   case parse source of
     Left problem ⇒ pure (Left problem)
     Right program ⇒ do
-      let (console, with_console) = allocate_aggregate Nothing [("log", native_value native_log)] initial_state
+      let (console, with_console) = allocate_object [("log", native_value native_log)] initial_state
       result ← execute_statements host (bind_local "console" console with_console) program
       pure (case result of
         Left problem ⇒ Left problem
-        Right after ⇒ Right (after.output, fromMaybe 0 after.stopped))
+        Right after ⇒ Right (reverse after.output_reversed, fromMaybe 0 after.stopped))
 
 public export
 run_with_host : Host → Text → IO (Either Text (List Text))

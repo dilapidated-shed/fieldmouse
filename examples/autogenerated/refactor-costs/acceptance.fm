@@ -1,0 +1,20 @@
+var log ← console.log;
+log("begin");
+function collect(n) {
+  log(n);
+  return n + 1;
+}
+var count ← 0;
+while (count < 4) { count ← collect(count); }
+log();
+var array ← [collect(8), {n: 10}, collect(11)];
+var alias ← array;
+alias[4] ← array[1];
+alias[4].n ← 13;
+log(array.length, array[0], array[2], array[3], array[1].n, alias ≟ array);
+log(stringifyJson({first: 1, second: 2, first: 3}));
+var imported ← parseJson("[null,7,{\"n\":8}]");
+log(imported.length, imported[0], imported[1], imported[2].n);
+log("end");
+exit(23);
+log("unreachable");

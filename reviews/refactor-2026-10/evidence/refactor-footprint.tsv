@@ -1,0 +1,22 @@
+source_revision	d5803ca161ec7cb59ccb2c07e768d27d69fe7481
+compiler_source_revision	94dfd99bd3e376507fedc8611053b7173b2519f0
+target	linux-x64
+artifact_kind	Chez compiled program plus generated launcher
+payload_bytes	193245
+payload_sha256	a7cd7a5258ffa486b4c8200d7d95bb17c9427e867c6f9e6fac89d7d845af47d5
+launcher_bytes	429
+support_bytes	50624
+minimal_application_bytes	244298
+chez_scheme_bytes	1081440
+chez_petite.boot_bytes	2163680
+chez_scheme.boot_bytes	1163082
+chez_runtime_bytes	4408202
+application_and_chez_bytes	4652500
+node_reference_bytes	126939688
+scheme_linked_dependencies	linux-vdso.so.1 (0x00007fb37cee2000);  libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007fb37cbe8000);  libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fb37c9d6000);  /lib64/ld-linux-x86-64.so.2 (0x00007fb37cee4000)
+support_linked_dependencies	linux-vdso.so.1 (0x00007fde61532000);  libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fde61304000);  /lib64/ld-linux-x86-64.so.2 (0x00007fde61534000)
+startup_smoke	PASS
+startup_elapsed_ms	910.554293
+node_runtime_required	no
+idric_compiler_required_at_runtime	no
+chez_runtime_required	yes
