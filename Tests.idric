@@ -74,6 +74,31 @@ assert_rejected name source = do
 covering
 main : IO ()
 main = do
+  assert_run "empty program has no output" "" []
+  assert_run "empty log lines retain their position"
+    "console.log(); console.log(\"middle\"); console.log();"
+    ["", "middle", ""]
+  assert_run "aliased logging preserves nested call and loop order"
+    "var log ← console.log; function emit(n) { log(n); return n + 1; } var i ← 0; while (i < 3) { i ← emit(i); } log(\"end\");"
+    ["0.0", "1.0", "2.0", "end"]
+  assert_run_with_host "exit preserves all prior log lines in order"
+    script_host "console.log(\"first\"); console.log(\"second\"); exit(0); console.log(\"unreachable\");"
+    ["first", "second"]
+  assert_rejected "runtime failure after logs still fails the complete result"
+    "console.log(\"first\"); console.log(\"second\"); missing();"
+  assert_run "empty and singleton arrays preserve length and absent slots"
+    "var a ← []; var b ← [7]; console.log(a.length, a[0], b.length, b[0], b[1]);"
+    ["0.0 undefined 1.0 7.0 undefined"]
+  assert_run "array construction preserves effect order and distinct identities"
+    "var n ← 0; var a ← [(n ← n + 1), (n ← n + 1), (n ← n + 1)]; var b ← [1, 2, 3]; console.log(a[0], a[1], a[2], n, a ≟ b);"
+    ["1.0 2.0 3.0 3.0 false"]
+  assert_run "JSON arrays retain nested identities through later growth"
+    "var a ← parseJson(\"[7,{\\\"x\\\":8}]\"); var nested ← a[1]; a[3] ← nested; a[3].x ← 9; console.log(a.length, a[2], a[1].x, a[1] ≟ a[3]);"
+    ["4.0 undefined 9.0 true"]
+  assert_run "object duplicate replacement preserves first key position"
+    "console.log(stringifyJson({a: 1, b: 2, a: 3}));"
+    ["{\"a\":3.0,\"b\":2.0}"]
+
   assert_run "multiplication binds before addition"
     "console.log(2 + 3 * 4);"
     ["14.0"]

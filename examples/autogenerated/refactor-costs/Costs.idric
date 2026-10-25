@@ -1,0 +1,46 @@
+module Main
+
+import Fieldmouse
+import Data.String
+import System
+import System.Clock
+import System.File
+
+%default covering
+
+source_for : Text → Number → Text
+source_for "logs" size =
+  "var i ← 0; while (i < " ++ show size ++
+  ") { console.log(i); i ← i + 1; }"
+source_for _ size =
+  "var xs ← parseJson(\"[" ++ joinBy "," (replicate size "7") ++
+  "]\"); console.log(xs.length, xs[0], xs[" ++ show (size `minus` 1) ++ "]);"
+
+expected_for : Text → Number → List Text
+expected_for "logs" size = map (\index ⇒ show (the Double (cast index))) [0 .. size `minus` 1]
+expected_for _ size = [show (the Double (cast size)) ++ " 7.0 7.0"]
+
+main : IO ()
+main = do
+  arguments ← getArgs
+  case arguments of
+    [_, mode, count] ⇒ do
+      let size : Number = cast count
+      if size ≟ 0 || not (elem mode ["logs", "array"]) then exitFailure else do
+        let source = source_for mode size
+        started ← clockTime Monotonic
+        result ← run source
+        finished ← clockTime Monotonic
+        case result of
+          Left problem ⇒ do putStrLn problem; exitFailure
+          Right output ⇒
+            if output ≟ expected_for mode size then do
+              putStrLn ("elapsed_ns\t" ++ show (toNano finished - toNano started))
+              status ← readFile "/proc/self/status"
+              case status of
+                Left problem ⇒ do putStrLn (show problem); exitFailure
+                Right text ⇒ case filter (isPrefixOf "VmHWM:") (lines text) of
+                  [peak] ⇒ do putStrLn peak; putStrLn "PASS"
+                  _ ⇒ do putStrLn "missing Linux peak RSS"; exitFailure
+              else do putStrLn "wrong benchmark result"; exitFailure
+    _ ⇒ do putStrLn "usage: refactor-costs logs|array POSITIVE_SIZE"; exitFailure
