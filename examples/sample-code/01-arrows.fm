@@ -1,0 +1,9 @@
+// Standard JavaScript '=' assignment is not Field Mouse assignment.
+var count ← 0;
+1 → count;
+count ← count + 3;
+if (!(count ≟ 4)) exit(20);
+if (!(0 = Ø)) exit(21);    // loose equality has limited coercion
+if (0 ≟ Ø) exit(22);       // strict equality sees different types
+if (!(4 ≠ 3)) exit(23);
+console.log("arrows and comparisons: pass");

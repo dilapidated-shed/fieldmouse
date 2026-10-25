@@ -1,0 +1,11 @@
+function makeCounter(start) {
+  var current ← start;
+  return function() {
+    current ← current + 1;
+    return current;
+  };
+}
+var counter ← makeCounter(9);
+if (!(counter() ≟ 10)) exit(40);
+if (!(counter() ≟ 11)) exit(41);
+console.log("lexical closures: pass");

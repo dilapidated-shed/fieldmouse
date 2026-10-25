@@ -1,0 +1,11 @@
+// Run with one writable path; check.sh supplies a temporary destination.
+var paths ← arguments();
+if (paths.length ≠ 1) {
+  console.log("usage: fieldmouse 05-host-files.fm OUTPUT-PATH");
+  exit(64);
+}
+var outputPath ← paths[0];
+writeText(outputPath, "alpha\n");
+appendText(outputPath, "beta\n");
+if (!(readText(outputPath) ≟ "alpha\nbeta\n")) exit(60);
+console.log("synchronous text-file host: pass");

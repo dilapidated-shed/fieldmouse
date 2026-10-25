@@ -1,0 +1,185 @@
+FIELD MOUSE GOTCHAS
+====================
+
+Baseline: dilapidated-shed/fieldmouse master at
+3736fe4088787f3fb16af64e2dabe75cd7ef15a4 (2026-10-12).
+This is a plain-text compatibility and operational warning list.
+Sources inspected: Fieldmouse.idric, Main.idric, Tests.idric, README.md,
+ISSUES.md, tests/helpers/, and the repository CI definition.
+
+Classification:
+  ABSENT      No support in the current interpreter.
+  DIFFERENT   Implemented but not standard JavaScript behavior.
+  LIMITED     A real feature, with a narrower contract.
+  GOAL        A desired future direction, NOT a current feature.
+This list is intentionally expandable; it is not a complete ECMAScript audit.
+
+START HERE
+----------
+DIFFERENT: This is NOT currently a drop-in JavaScript engine, nor V8,
+  Node, a browser JS runtime, or the old C MuJS implementation. The active
+  interpreter is written in Idriç and uses its own source language.
+GOAL: The original intention included accepting unchanged JavaScript as well
+  as experimenting with a changed syntax. A separate conventional-JS mode
+  has NOT been delivered. Merely naming a file .js does not activate one.
+DIFFERENT: Standard JavaScript examples copied from the web commonly fail
+  to parse, or run with different semantics. Do not claim ES5/ES6/Node
+  compatibility merely because examples of arrays and functions work.
+
+OPERATORS AND LEXING
+--------------------
+DIFFERENT: "name ← value" and "value → name" assign. JavaScript "name = value"
+  is not assignment here; "=" is an equality test.
+DIFFERENT: "=" is a coercive-equality relation, "≠" its inequality, and "≟"
+  strict equality. The coercive relation is only a partial implementation
+  of JavaScript's conversion rules.
+ABSENT: The JS equality spellings ==, !=, ===, and !== are not accepted as
+  expression operators, although the lexer can recognize those tokens.
+DIFFERENT: False is spelled Ø in Field Mouse source. "false" is NOT the
+  Boolean false literal. "true" is supported.
+LIMITED: Source arithmetic accepts +, -, *, / and numeric comparisons.
+  Remainder "%" parses but evaluation fails with an explicit error.
+DIFFERENT: The Idriç source implementation uses ÷ internally, but Field
+  Mouse source division is /. Do not copy Idriç arithmetic syntax into .fm.
+ABSENT: ++, --, +=, -=, *=, /=, ??, ?., ? :, bitwise operators, and
+  JavaScript arrow functions (=>) are not supported.
+LIMITED: Numeric literals are a basic decimal form with optional fraction.
+  Do not assume JS hex, binary, exponent, leading-dot, or bigint literals.
+  JSON parsing has a separate, more complete JSON number grammar.
+LIMITED: Source strings support a small escape set (e.g. \n, \r, \t,
+  quotes, and backslash). Do not assume JavaScript's \uXXXX or \xHH
+  string literal behavior; JSON strings use a separate Unicode-aware parser.
+ABSENT: Template literals, regexp literals, destructuring, spread/rest
+  syntax, and computed keys inside object literals.
+LIMITED: A trailing comma in an array literal is rejected. Do not assume
+  JavaScript-style trailing commas or automatic semicolon insertion.
+
+DECLARATIONS, CONTROL, AND ERRORS
+---------------------------------
+DIFFERENT: var, let, and const are provisional aliases. const does not
+  enforce immutability, and let does not implement block scoping or a TDZ.
+DIFFERENT: Blocks execute in the surrounding binding scope. JavaScript
+  declaration hoisting is not implemented; functions become available when
+  their declarations execute.
+DIFFERENT: Reading an unknown variable fails. Assignment to an unknown
+  variable presently creates a binding instead of raising ReferenceError.
+ABSENT: for, for...of, for...in, do/while, switch, break, continue,
+  throw, try/catch/finally, and JavaScript exception objects/handling.
+LIMITED: if/else, while, return, and regular function declarations /
+  function expressions work, but return outside a function fails.
+LIMITED: Function calls require exactly the declared parameter count;
+  JS allows missing or extra arguments. Duplicate parameter names fail.
+LIMITED: Function call depth is checked and stops at 256.
+ABSENT: Classes, constructors/new, prototype inheritance, generators,
+  async functions, eval, Function constructor, and automatic method "this".
+DIFFERENT: Calling an object property holding a function does not bind
+  an implicit "this" receiver.
+DIFFERENT: Errors abort the interpreter. They are not catchable by scripts.
+  Source parsing finishes before effects start, but a later runtime error
+  does not undo earlier file/process effects.
+
+PROMISES, ASYNCHRONY, AND PLATFORM APIs
+---------------------------------------
+ABSENT: Promise constructor, Promise.resolve/reject, .then/.catch/.finally,
+  microtasks, event loop, async/await, and task scheduling. Promises are
+  not present with odd behavior: they are NOT implemented.
+ABSENT: setTimeout, setInterval, queueMicrotask, browser events, DOM,
+  fetch, XMLHttpRequest, WebSocket, and browser storage APIs.
+ABSENT: Node require(), import/export, ES modules, CommonJS modules, npm,
+  node:fs, node:path, node:child_process, streams, process/Buffer APIs.
+LIMITED: Instead use the project's own synchronous host functions such as
+  readText, writeText, arguments, environment, and subprocess; these are
+  not drop-in Node API substitutes.
+ABSENT: Typed arrays, ArrayBuffer, binary Buffer, Symbol, BigInt, Map,
+  Set, Date, regular-expression objects, and a general JavaScript
+  built-in object/library surface (Math, Array methods, String methods,
+  Object methods, and so forth).
+LIMITED: console.log exists, but this is not a full browser/Node console.
+
+OBJECTS, ARRAYS, STRINGS, AND COERCION
+--------------------------------------
+LIMITED: Arrays and objects have identities and support nested reads/writes,
+  but no prototype chain, getters/setters, Proxy, or prototype methods.
+ABSENT: Familiar array methods such as push, pop, map, filter, reduce,
+  sort, splice, join, forEach, etc.
+DIFFERENT: Array length is readable but assignment to length fails. An
+  out-of-range nonnegative integer write grows the array and creates holes.
+DIFFERENT: Array indices must be canonical nonnegative integer keys; JS
+  allows ordinary extra array object properties such as array.foo.
+LIMITED: Object property access supports text or nonnegative-integer keys.
+  JavaScript's general ToPropertyKey conversion is not implemented.
+DIFFERENT: Reading a missing object property/array slot yields undefined;
+  reading a completely unknown global name fails.
+LIMITED: Text exposes .length only; do not assume text[0] or JS String
+  methods. Unicode length is not promised to follow UTF-16 JS code units.
+DIFFERENT: Non-primitive values render in console output as [array],
+  [object], [function], or [native ...], not Node inspection strings.
+LIMITED: Numbers use Double, and formatting is runtime-specific: e.g.
+  42 often displays as 42.0. Strict/loose comparison is not a complete
+  ECMAScript conversion model. Do not assume JavaScript NaN/Infinity globals.
+LIMITED: && and || short-circuit and return operand values, but broader
+  JavaScript operator behavior is not implied.
+
+JSON
+----
+DIFFERENT: Call parseJson(text) and stringifyJson(value), not JSON.parse
+  or JSON.stringify. Those JavaScript global methods are not defined.
+LIMITED: parseJson accepts proper JSON including JSON's true/false tokens
+  and Unicode escapes; this does not make false a Field Mouse source literal.
+DIFFERENT: stringifyJson refuses undefined, function values, nonfinite
+  numbers, and cyclic references; JavaScript JSON.stringify has some
+  omission/substitution behaviors that differ.
+DIFFERENT: Missing array slots serialize as null. Repeated acyclic object
+  references can serialize; cycles cannot.
+DIFFERENT: Numeric text, object property order, and formatting are not
+  promised byte-for-byte identical to JavaScript JSON.stringify.
+
+HOST EFFECTS AND SECURITY
+-------------------------
+LIMITED: Text I/O is synchronous. There is no file removal, rename,
+  recursive mkdir, filesystem stats, or general Node fs module here.
+LIMITED: createDirectory creates a single directory. listDirectory
+  supplies sorted names; lexical path helpers do not consult disk state.
+LIMITED: NUL bytes in host file text/path arguments are rejected.
+LIMITED: subprocess(program, arrayOfTextArgs) returns {status, stdout}.
+  stderr is inherited, not returned. No stdin or streaming/process handle.
+DIFFERENT: The underlying subprocess implementation currently uses an
+  escaped shell-backed adapter. Arguments are individually quoted, but
+  this is NOT direct exec-vector lowering or a security sandbox.
+IMPORTANT: Filesystem/process effects can alter the host. Do not execute
+  untrusted Field Mouse scripts. Typed host requests are not capability
+  restrictions on allowed paths or programs.
+DIFFERENT: console.log appends to an internal output list. The CLI prints
+  collected logs after successful execution (including deliberate exit).
+  If a runtime error happens, collected log output is discarded.
+DIFFERENT: The CLI currently prints error diagnostics with putStrLn
+  (stdout), not the stderr behavior JavaScript CLI users may expect.
+
+RUNTIME, DELIVERY, AND EVIDENCE
+-------------------------------
+LIMITED: The active host runtime is compiled through Idriç to a Chez
+  payload plus launcher/support files. It does not require Node or the
+  Idriç compiler at execution, but it DOES need the documented Chez
+  runtime and generated files. It is not a standalone ELF.
+LIMITED: The supported CI platform is Linux x86-64. Android packaging
+  and actual MIRO A1/C67 acceptance have not been established here;
+  there is no Android/DEX requirement for the current Linux runtime.
+LIMITED: Interpreter-owned aggregate/function identities remain allocated
+  for the script lifetime. No claim of general-purpose garbage collection,
+  long-running server suitability, or V8-like speed.
+LIMITED: Node differential checks cover specific representative helper
+  tasks, NOT general JavaScript language compliance.
+IMPORTANT: Cat Food integration remains stale (old fieldmouse branch and
+  incompatible syntax in its smoke test); do not interpret standalone
+  Field Mouse CI success as a green end-to-end Cat Food install.
+IMPORTANT: The active Idriç rewrite, inherited MuJS history, and existing
+  upstream notice files require a separate attribution/license review
+  before describing a polished public distribution. Do not discard
+  historical licenses.
+
+WHEN YOU FIND ANOTHER SURPRISE
+------------------------------
+Add a reproduction to Tests.idric or tests/helpers/, characterize its
+observable result, then add an ABSENT, DIFFERENT, or LIMITED entry here.
+Only call something GOAL when it has not shipped. Keep this file useful to
+a reader deciding whether an ordinary JS script can run unchanged.

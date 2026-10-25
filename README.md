@@ -6,6 +6,13 @@ is written in **Idriç**, with deliberately smaller language and its own syntax.
 The original MuJS-derived C runtime remains in Git history as a semantic
 reference, outside the active build.
 
+**Compatibility note:** Field Mouse began as an experiment in changing
+JavaScript while still wanting to accept existing scripts. The current dialect
+does **not** yet accept arbitrary conventional JavaScript. See
+[goals](GOALS.md), [language conventions](CONVENTIONS.md),
+[gotchas](gotchas), and [runnable examples](examples/sample-code/README.md)
+before trying to use it as a JavaScript replacement.
+
 ## Run a script
 
 ```text
