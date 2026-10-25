@@ -728,7 +728,8 @@ record Runtime where
   aggregates : List (Number, Aggregate)
   functions : List (Number, Closure)
   next_identity : Number
-  output : List Text
+  -- Prepend while evaluating; restore chronological order only at the run boundary.
+  output_reversed : List Text
   returned : Maybe value
   stopped : Maybe Int
   call_depth : Number
@@ -1406,7 +1407,7 @@ mutual
 
   invoke_native_active : Host → Runtime → native_function → List value → IO (Either Text (value, Runtime))
   invoke_native_active host state native_log arguments =
-    pure (Right (undefined_value, { output := state.output ++ [joinBy " " (map render arguments)] } state))
+    pure (Right (undefined_value, { output_reversed := joinBy " " (map render arguments) :: state.output_reversed } state))
   invoke_native_active host state native_parse_json [string_value text] =
     pure (case parse_json_text text of
       Left problem ⇒ Left ("parseJson: malformed JSON: " ++ problem)
@@ -1503,7 +1504,7 @@ run_command_with_host host source =
       result ← execute_statements host (bind_local "console" console with_console) program
       pure (case result of
         Left problem ⇒ Left problem
-        Right after ⇒ Right (after.output, fromMaybe 0 after.stopped))
+        Right after ⇒ Right (reverse after.output_reversed, fromMaybe 0 after.stopped))
 
 public export
 run_with_host : Host → Text → IO (Either Text (List Text))
