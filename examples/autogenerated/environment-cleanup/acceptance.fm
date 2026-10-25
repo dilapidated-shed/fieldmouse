@@ -1,0 +1,13 @@
+var x ← 1;
+function saved() { return x; }
+var x ← 2;
+x ← 3;
+console.log(saved(), x);
+function pair() {
+  var n ← 0;
+  return {inc: function() { n ← n + 1; }, read: function() { return n; }};
+}
+var p ← pair();
+p.inc();
+p.inc();
+console.log(p.read());
