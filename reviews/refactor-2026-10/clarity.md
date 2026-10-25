@@ -112,3 +112,7 @@ its stdout into build/clarity-observed.txt.
 No speed improvement is claimed. Source locations, retained-memory growth,
 linear identity lookups, numeric semantics and broader JavaScript compatibility
 remain separate work. gotchas behavior is unchanged.
+
+clarity-publication.tsv maps the local commits named above to their published
+commits with verified identical Git trees. Commit metadata differs; tested
+source bytes do not. The mapping itself is documentation, not executable code.
