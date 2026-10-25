@@ -3,6 +3,10 @@
 Review base: `07720d43eb6f9ec740719f34e29774efa8d34c50`.
 Implementation: `735fe2d` on `refactor/remove-obsolete-environment`.
 
+`publication.tsv` maps the locally tested commits to published commits with
+verified identical Git trees. Only commit metadata differs; all tested file
+bytes are preserved. The mapping itself is review metadata.
+
 The active evaluator uses `Runtime.bindings : List (Text, Number)` and shared
 cells. The old private `Environment = List (String, value)`, `lookup_variable`,
 `set_variable` and `define_variable` have no callers outside their own obsolete
