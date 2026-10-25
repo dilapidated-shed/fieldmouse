@@ -3,7 +3,6 @@ module Fieldmouse.Json_runtime_values
 import Data.Text
 import Data.List
 import Data.Maybe
-import Data.List1
 import Fieldmouse.Language_types
 import Fieldmouse.Runtime_storage
 import Fieldmouse.Json_syntax

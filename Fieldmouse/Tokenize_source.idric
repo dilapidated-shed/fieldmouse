@@ -3,7 +3,6 @@ module Fieldmouse.Tokenize_source
 import Data.Text
 import Data.List
 import Data.Maybe
-import Data.List1
 import Fieldmouse.Language_types
 
 -- Covering preserves the interpreter's deliberate recursion contract.

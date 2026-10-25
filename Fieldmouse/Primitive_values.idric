@@ -3,7 +3,6 @@ module Fieldmouse.Primitive_values
 import Data.Text
 import Data.List
 import Data.Maybe
-import Data.List1
 import Fieldmouse.Language_types
 
 -- Covering preserves the interpreter's deliberate recursion contract.
@@ -44,7 +43,6 @@ convert_value_to_number (string_value text) =
 convert_value_to_number undefined_value = Left "cannot convert undefined to number"
 convert_value_to_number _ = Left "cannot convert structured value or function to number"
 
-export
 values_are_strictly_equal : value → value → Bool
 values_are_strictly_equal undefined_value undefined_value = True
 values_are_strictly_equal null_value null_value = True

@@ -3,7 +3,6 @@ module Fieldmouse.Json_syntax
 import Data.Text
 import Data.List
 import Data.Maybe
-import Data.List1
 
 -- Covering preserves the interpreter's deliberate recursion contract.
 %default covering
