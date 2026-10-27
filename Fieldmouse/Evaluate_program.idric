@@ -1,0 +1,270 @@
+module Fieldmouse.Evaluate_program
+
+import Data.Text
+import Data.List
+import Data.Maybe
+import Fieldmouse.Language_types
+import Fieldmouse.Primitive_values
+import Fieldmouse.Runtime_storage
+import Fieldmouse.Host_interface
+import Fieldmouse.Builtin_functions
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+-- Calling a function replaces these three fields, not the shared heap or logs.
+record Caller_scope where
+  constructor Saved_caller_scope
+  caller_variable_bindings : List (Text, Number)
+  caller_return_value : Maybe value
+  caller_call_depth : Number
+
+remember_caller_scope : Runtime → Caller_scope
+remember_caller_scope runtime_state =
+  Saved_caller_scope runtime_state.variable_bindings runtime_state.function_return_value runtime_state.function_call_depth
+
+maximum_function_call_depth : Number
+maximum_function_call_depth = 256
+
+check_function_argument_count : Closure → List value → Either Text ()
+check_function_argument_count captured argument_values =
+  if length argument_values ≟ length captured.parameter_names then Right () else
+    Left ("function: expected " ++ show (length captured.parameter_names) ++
+          " arguments, found " ++ show (length argument_values))
+
+check_function_call_depth : Runtime → Either Text ()
+check_function_call_depth runtime_state =
+  if runtime_state.function_call_depth >= maximum_function_call_depth
+    then Left "function call depth exceeded 256"
+    else Right ()
+
+enter_captured_function_scope : Closure → Runtime → Runtime
+enter_captured_function_scope captured runtime_state =
+  { variable_bindings := captured.variable_bindings,
+    function_return_value := Nothing,
+    function_call_depth := S runtime_state.function_call_depth } runtime_state
+
+bind_parameters_to_argument_values : List Text → List value → Runtime → Runtime
+bind_parameters_to_argument_values parameter_names argument_values runtime_state =
+  foldl bind_parameter runtime_state (zip parameter_names argument_values)
+  where
+    bind_parameter : Runtime → (Text, value) → Runtime
+    bind_parameter current_state (parameter_name, argument_value) =
+      declare_variable_with_new_cell parameter_name argument_value current_state
+
+restore_caller_scope_after_function_call : Caller_scope → Runtime → Runtime
+restore_caller_scope_after_function_call caller state_after_function =
+  -- Keep changed cells/objects, console output and exit status from the callee.
+  { variable_bindings := caller.caller_variable_bindings,
+    function_return_value := caller.caller_return_value,
+    function_call_depth := caller.caller_call_depth } state_after_function
+
+mutual
+  evaluate_expression : Host → Runtime → expression → IO (Either Text (value, Runtime))
+  evaluate_expression host runtime_state expression_to_evaluate =
+    case runtime_state.program_exit_status of
+      Just _ ⇒ pure (Right (undefined_value, runtime_state))
+      Nothing ⇒ evaluate_expression_in_running_program host runtime_state expression_to_evaluate
+
+  evaluate_expression_in_running_program : Host → Runtime → expression → IO (Either Text (value, Runtime))
+  evaluate_expression_in_running_program host runtime_state (literal_expression literal) = pure (Right (literal, runtime_state))
+  evaluate_expression_in_running_program host runtime_state (variable_expression name) =
+    case read_variable_value name runtime_state of
+      Right evaluated_value ⇒ pure (Right (evaluated_value, runtime_state))
+      Left problem ⇒ case parse_native_function name of
+        Just native ⇒ pure (Right (native_value native, runtime_state))
+        Nothing ⇒ pure (Left problem)
+  evaluate_expression_in_running_program host runtime_state (native_call_expression native argument_values) = do
+    result ← evaluate_expressions_in_source_order host runtime_state argument_values
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_values, state_after_evaluation) ⇒ call_builtin_function host state_after_evaluation native evaluated_values
+  evaluate_expression_in_running_program host runtime_state (assignment_expression name body) = do
+    result ← evaluate_expression host runtime_state body
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (evaluated_value, state_after_evaluation) ⇒ Right (evaluated_value, assign_variable_or_create_binding name evaluated_value state_after_evaluation))
+  evaluate_expression_in_running_program host runtime_state (array_expression members) = do
+    result ← evaluate_expressions_in_source_order host runtime_state members
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (evaluated_values, state_after_evaluation) ⇒ Right (create_array_from_values evaluated_values state_after_evaluation))
+  evaluate_expression_in_running_program host runtime_state (object_expression members) = do
+    result ← evaluate_object_members_in_source_order host runtime_state members
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (evaluated_values, state_after_evaluation) ⇒ Right (create_object_from_members evaluated_values state_after_evaluation))
+  evaluate_expression_in_running_program host runtime_state (function_expression parameter_names body) =
+    let identity = runtime_state.next_storage_identity
+        captured = CapturedFunction parameter_names body runtime_state.variable_bindings
+     in pure (Right (function_value identity,
+          { stored_functions := (identity, captured) :: runtime_state.stored_functions, next_storage_identity := S identity } runtime_state))
+  evaluate_expression_in_running_program host runtime_state (property_expression owner key) = do
+    result ← evaluate_expressions_in_source_order host runtime_state [owner, key]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([evaluated_value, key_value], state_after_evaluation) ⇒ do
+        if isJust state_after_evaluation.program_exit_status then Right (undefined_value, state_after_evaluation) else do
+          name ← convert_value_to_property_key key_value
+          result ← read_property state_after_evaluation evaluated_value name
+          Right (result, state_after_evaluation)
+      _ ⇒ Left "invalid property evaluation")
+  evaluate_expression_in_running_program host runtime_state (property_assignment owner key body) = do
+    result ← evaluate_expressions_in_source_order host runtime_state [owner, key, body]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([evaluated_value, key_value, new_value], state_after_evaluation) ⇒ do
+        if isJust state_after_evaluation.program_exit_status then Right (undefined_value, state_after_evaluation) else do
+          name ← convert_value_to_property_key key_value
+          changed ← write_property state_after_evaluation evaluated_value name new_value
+          Right (new_value, changed)
+      _ ⇒ Left "invalid property assignment")
+  evaluate_expression_in_running_program host runtime_state (call_expression callee argument_values) = do
+    result ← evaluate_expression host runtime_state callee
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (function, after_callee) ⇒ do
+        argument_result ← evaluate_expressions_in_source_order host after_callee argument_values
+        case argument_result of
+          Left problem ⇒ pure (Left problem)
+          Right (evaluated_values, after_arguments) ⇒ call_function_value host after_arguments function evaluated_values
+  evaluate_expression_in_running_program host runtime_state (unary_expression operator body) = do
+    result ← evaluate_expression host runtime_state body
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (evaluated_value, state_after_evaluation) ⇒ if isJust state_after_evaluation.program_exit_status then Right (undefined_value, state_after_evaluation) else case operator of
+        unary_not ⇒ Right (boolean_value (not (value_is_true_in_condition evaluated_value)), state_after_evaluation)
+        unary_negate ⇒ do
+          number ← convert_value_to_number evaluated_value
+          Right (number_value (-number), state_after_evaluation)
+        unary_positive ⇒ do
+          number ← convert_value_to_number evaluated_value
+          Right (number_value number, state_after_evaluation))
+  evaluate_expression_in_running_program host runtime_state (binary_expression binary_and left right) = do
+    result ← evaluate_expression host runtime_state left
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_value, state_after_evaluation) ⇒
+        if value_is_true_in_condition evaluated_value then evaluate_expression host state_after_evaluation right else pure (Right (evaluated_value, state_after_evaluation))
+  evaluate_expression_in_running_program host runtime_state (binary_expression binary_or left right) = do
+    result ← evaluate_expression host runtime_state left
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_value, state_after_evaluation) ⇒
+        if value_is_true_in_condition evaluated_value then pure (Right (evaluated_value, state_after_evaluation)) else evaluate_expression host state_after_evaluation right
+  evaluate_expression_in_running_program host runtime_state (binary_expression operator left right) = do
+    result ← evaluate_expressions_in_source_order host runtime_state [left, right]
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right ([left_value, right_value], state_after_evaluation) ⇒ do
+        if isJust state_after_evaluation.program_exit_status then Right (undefined_value, state_after_evaluation) else do
+          answer ← apply_binary_operator_to_values operator left_value right_value
+          Right (answer, state_after_evaluation)
+      _ ⇒ Left "invalid binary evaluation")
+
+  evaluate_expressions_in_source_order : Host → Runtime → List expression → IO (Either Text (List value, Runtime))
+  evaluate_expressions_in_source_order host runtime_state [] = pure (Right ([], runtime_state))
+  evaluate_expressions_in_source_order host runtime_state (first :: rest) = do
+    result ← evaluate_expression host runtime_state first
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_value, after_first) ⇒ do
+        later ← evaluate_expressions_in_source_order host after_first rest
+        pure (case later of
+          Left problem ⇒ Left problem
+          Right (evaluated_values, state_after_evaluation) ⇒ Right (evaluated_value :: evaluated_values, state_after_evaluation))
+
+  evaluate_object_members_in_source_order : Host → Runtime → List (Text, expression) → IO (Either Text (List (Text, value), Runtime))
+  evaluate_object_members_in_source_order host runtime_state [] = pure (Right ([], runtime_state))
+  evaluate_object_members_in_source_order host runtime_state ((key, first) :: rest) = do
+    result ← evaluate_expression host runtime_state first
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_value, after_first) ⇒ do
+        later ← evaluate_object_members_in_source_order host after_first rest
+        pure (case later of
+          Left problem ⇒ Left problem
+          Right (evaluated_values, state_after_evaluation) ⇒ Right ((key, evaluated_value) :: evaluated_values, state_after_evaluation))
+
+  call_function_value : Host → Runtime → value → List value → IO (Either Text (value, Runtime))
+  call_function_value host runtime_state function argument_values =
+    if isJust runtime_state.program_exit_status then pure (Right (undefined_value, runtime_state))
+      else call_function_in_running_program host runtime_state function argument_values
+
+  call_function_in_running_program : Host → Runtime → value → List value → IO (Either Text (value, Runtime))
+  call_function_in_running_program host runtime_state (native_value native) argument_values = call_builtin_function host runtime_state native argument_values
+  call_function_in_running_program host runtime_state (function_value identity) argument_values =
+    case find_entry_by_key identity runtime_state.stored_functions of
+      Nothing ⇒ pure (Left "invalid function identity")
+      Just captured ⇒
+        case check_function_argument_count captured argument_values of
+          Left problem ⇒ pure (Left problem)
+          Right () ⇒ case check_function_call_depth runtime_state of
+            Left problem ⇒ pure (Left problem)
+            Right () ⇒ do
+              let caller = remember_caller_scope runtime_state
+              let captured_scope = enter_captured_function_scope captured runtime_state
+              let function_scope = bind_parameters_to_argument_values captured.parameter_names argument_values captured_scope
+              result ← execute_statement_sequence host function_scope captured.body
+              pure (case result of
+                Left problem ⇒ Left problem
+                Right state_after_function ⇒
+                  Right (fromMaybe undefined_value state_after_function.function_return_value,
+                    restore_caller_scope_after_function_call caller state_after_function))
+  call_function_in_running_program _ _ _ _ = pure (Left "called value is not a function")
+  execute_statement : Host → Runtime → statement → IO (Either Text Runtime)
+  execute_statement host runtime_state (define_statement name initial) = do
+    -- Reserve the binding before capturing the function: self recursion is free.
+    let reserved = declare_variable_with_new_cell name undefined_value runtime_state
+    result ← evaluate_expression host reserved initial
+    pure (case result of
+      Left problem ⇒ Left problem
+      Right (evaluated_value, state_after_evaluation) ⇒ Right (assign_variable_or_create_binding name evaluated_value state_after_evaluation))
+  execute_statement host runtime_state (expression_statement body) = do
+    result ← evaluate_expression host runtime_state body
+    pure (map snd result)
+  execute_statement host runtime_state (log_statement argument_values) = do
+    result ← evaluate_expressions_in_source_order host runtime_state argument_values
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_values, state_after_evaluation) ⇒ do
+        logged ← call_builtin_function host state_after_evaluation native_log evaluated_values
+        pure (map snd logged)
+  execute_statement host runtime_state (return_statement body) =
+    if runtime_state.function_call_depth ≟ 0 then pure (Left "return outside function") else do
+      result ← evaluate_expression host runtime_state body
+      pure (case result of
+        Left problem ⇒ Left problem
+        Right (evaluated_value, state_after_evaluation) ⇒ Right ({ function_return_value := Just evaluated_value } state_after_evaluation))
+  execute_statement host runtime_state (block_statement statements) = execute_statement_sequence host runtime_state statements
+  execute_statement host runtime_state (if_statement condition yes_branch no_branch) = do
+    result ← evaluate_expression host runtime_state condition
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_value, state_after_evaluation) ⇒
+        if isJust state_after_evaluation.program_exit_status then pure (Right state_after_evaluation) else
+        if value_is_true_in_condition evaluated_value then execute_statement host state_after_evaluation yes_branch else
+          case no_branch of
+            Nothing ⇒ pure (Right state_after_evaluation)
+            Just branch ⇒ execute_statement host state_after_evaluation branch
+  execute_statement host runtime_state loop@(while_statement condition body) = do
+    result ← evaluate_expression host runtime_state condition
+    case result of
+      Left problem ⇒ pure (Left problem)
+      Right (evaluated_value, state_after_evaluation) ⇒
+        if isJust state_after_evaluation.program_exit_status || not (value_is_true_in_condition evaluated_value) then pure (Right state_after_evaluation) else do
+          result ← execute_statement host state_after_evaluation body
+          case result of
+            Left problem ⇒ pure (Left problem)
+            Right after_body ⇒
+              if statement_sequence_has_finished after_body then pure (Right after_body) else execute_statement host after_body loop
+
+  export
+  execute_statement_sequence : Host → Runtime → List statement → IO (Either Text Runtime)
+  execute_statement_sequence host runtime_state [] = pure (Right runtime_state)
+  execute_statement_sequence host runtime_state (first :: rest) =
+    if statement_sequence_has_finished runtime_state then pure (Right runtime_state) else do
+      result ← execute_statement host runtime_state first
+      case result of
+        Left problem ⇒ pure (Left problem)
+        Right state_after_evaluation ⇒ execute_statement_sequence host state_after_evaluation rest

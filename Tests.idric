@@ -2,52 +2,53 @@ module Tests
 
 import Fieldmouse
 import System
+import Data.Text
 
-fail : String -> IO ()
+fail : Text → IO ()
 fail message = do
   putStrLn ("FAIL: " ++ message)
   exitFailure
 
-pass : String -> IO ()
+pass : Text → IO ()
 pass name = putStrLn ("ok: " ++ name)
 
 covering
-assert_run : String -> String -> List String -> IO ()
+assert_run : Text → Text → List Text → IO ()
 assert_run name source expected = do
-  result <- run source
+  result ← run source
   case result of
-    Left problem => fail (name ++ " — " ++ problem)
-    Right actual =>
-      if actual == expected
+    Left problem ⇒ fail (name ++ " — " ++ problem)
+    Right actual ⇒
+      if actual ≟ expected
         then pass name
         else fail (name ++ " — expected " ++ show expected ++ ", found " ++ show actual)
 
 covering
-assert_run_with_host : String -> Host -> String -> List String -> IO ()
+assert_run_with_host : Text → Host → Text → List Text → IO ()
 assert_run_with_host name host source expected = do
-  result <- run_with_host host source
+  result ← run_with_host host source
   case result of
-    Left problem => fail (name ++ " — " ++ problem)
-    Right actual =>
-      if actual == expected
+    Left problem ⇒ fail (name ++ " — " ++ problem)
+    Right actual ⇒
+      if actual ≟ expected
         then pass name
         else fail (name ++ " — expected " ++ show expected ++ ", found " ++ show actual)
 
 covering
-assert_rejected_with_host : String -> Host -> String -> IO ()
+assert_rejected_with_host : Text → Host → Text → IO ()
 assert_rejected_with_host name host source = do
-  result <- run_with_host host source
+  result ← run_with_host host source
   case result of
-    Left _ => pass name
-    Right output => fail (name ++ " — unexpectedly ran with output " ++ show output)
+    Left _ ⇒ pass name
+    Right output ⇒ fail (name ++ " — unexpectedly ran with output " ++ show output)
 
 memory_host : Host
 memory_host (read_text_request path) =
-  if path == "virtual"
+  if path ≟ "virtual"
     then pure (Right (text_response "from host"))
     else pure (Left ("memory host has no '" ++ path ++ "'"))
 memory_host (file_exists_request path) =
-  pure (Right (boolean_response (path == "virtual")))
+  pure (Right (boolean_response (path ≟ "virtual")))
 memory_host _ = pure (Left "memory host does not implement this request")
 
 wrong_response_host : Host
@@ -64,16 +65,16 @@ script_host (exit_request _) = pure (Right done_response)
 script_host _ = pure (Left "injected host refusal")
 
 covering
-assert_rejected : String -> String -> IO ()
+assert_rejected : Text → Text → IO ()
 assert_rejected name source = do
-  result <- run source
+  result ← run source
   case result of
-    Left _ => pass name
-    Right output => fail (name ++ " — unexpectedly ran with output " ++ show output)
+    Left _ ⇒ pass name
+    Right output ⇒ fail (name ++ " — unexpectedly ran with output " ++ show output)
 
 covering
-main : IO ()
-main = do
+check_output_and_construction : IO ()
+check_output_and_construction = do
   assert_run "empty program has no output" "" []
   assert_run "empty log lines retain their position"
     "console.log(); console.log(\"middle\"); console.log();"
@@ -99,6 +100,9 @@ main = do
     "console.log(stringifyJson({a: 1, b: 2, a: 3}));"
     ["{\"a\":3.0,\"b\":2.0}"]
 
+covering
+check_dialect_syntax_and_operators : IO ()
+check_dialect_syntax_and_operators = do
   assert_run "multiplication binds before addition"
     "console.log(2 + 3 * 4);"
     ["14.0"]
@@ -163,6 +167,9 @@ main = do
   assert_rejected "unterminated strings are lexical errors"
     "console.log(\"missing);"
 
+covering
+check_injected_file_hosts : IO ()
+check_injected_file_hosts = do
   assert_run_with_host "native effects go through an injected host"
     memory_host
     "console.log(readText(\"virtual\"), fileExists(\"virtual\"));"
@@ -172,6 +179,9 @@ main = do
     wrong_response_host
     "console.log(readText(\"virtual\"));"
 
+covering
+check_structured_values_and_functions : IO ()
+check_structured_values_and_functions = do
   assert_run "array literals, length, missing slots, nested indexing"
     "var xs ← [10, [20, 30]]; console.log(xs.length, xs[1][0], xs[8]);"
     ["2.0 20.0 undefined"]
@@ -216,6 +226,9 @@ main = do
     "function sum(n) { if (n = 0) return 0; return n + sum(n - 1); } console.log(sum(4));"
     ["10.0"]
 
+covering
+check_json_data : IO ()
+check_json_data = do
   assert_run "JSON parses all required primitive kinds"
     "var x ← parseJson(\"[null,true,false,12.5,\\\"text\\\"]\"); console.log(x[0], x[1], x[2], x[3], x[4]);"
     ["null true false 12.5 text"]
@@ -239,6 +252,9 @@ main = do
     "var x ← parseJson(\"{\\\"n\\\":1e2,\\\"n\\\":-2.5e1}\"); console.log(x.n);"
     ["-25.0"]
 
+covering
+check_paths_and_host_responses : IO ()
+check_paths_and_host_responses = do
   assert_run "deterministic lexical paths"
     "console.log(joinPath(\"a\", \"b\", \"..\", \"c\"), normalizePath(\"/a/../b//.\"), joinPath(\"\", \"a\"), basename(\"/a/b.txt\"), dirname(\"/a/b.txt\"), normalizePath(\"../../a\"));"
     ["a/c /b a b.txt /a ../../a"]
@@ -258,6 +274,9 @@ main = do
   assert_rejected_with_host "host failure propagates"
     script_host "readText(\"refused\");"
 
+covering
+check_rejected_runtime_operations : IO ()
+check_rejected_runtime_operations = do
   assert_rejected "array negative indices are explicit errors" "var x ← [1]; x[-1] ← 2;"
   assert_rejected "array length mutation is deliberately unsupported" "var x ← []; x.length ← 3;"
   assert_rejected "null property access fails" "console.log(null.x);"
@@ -290,4 +309,56 @@ main = do
   assert_rejected "invalid exit status fails" "exit(2.5);"
   assert_rejected "deliberate failing status is not success" "exit(7);"
 
+covering
+assert_failure_message : Text → Text → Text → IO ()
+assert_failure_message name source expected_message = do
+  result ← run source
+  case result of
+    Left actual_message ⇒
+      if actual_message ≟ expected_message then pass name
+        else fail (name ++ " — wrong diagnostic: " ++ actual_message)
+    Right output ⇒ fail (name ++ " — unexpectedly ran with output " ++ show output)
+
+covering
+check_function_scope_transitions : IO ()
+check_function_scope_transitions = do
+  assert_run "redeclaration preserves the cell captured earlier"
+    "var x ← 1; function saved() { return x; } var x ← 2; x ← 3; console.log(saved(), x);"
+    ["1.0 3.0"]
+  assert_run "returned closures share their captured local cell"
+    "function pair() { var n ← 0; return {inc: function() { n ← n + 1; }, read: function() { return n; }}; } var p ← pair(); p.inc(); p.inc(); console.log(p.read());"
+    ["2.0"]
+  assert_run "restoring the caller keeps shared mutations and call order"
+    "var shared ← 0; function change(n) { shared ← shared + n; return shared; } function caller() { var local ← 9; var total ← change(2) + change(3); console.log(local, total, shared); return local; } console.log(caller(), shared);"
+    ["9.0 7.0 5.0", "9.0 5.0"]
+  assert_run "return leaves nested blocks and loops"
+    "function finish() { while (true) { { return 7; } console.log(\"unreachable\"); } } console.log(finish());"
+    ["7.0"]
+  assert_run "a function without return does not reuse an earlier return"
+    "function first() { return 8; } function second() { var x ← first(); } console.log(first(), second());"
+    ["8.0 undefined"]
+  assert_failure_message "too few arguments retain their diagnostic"
+    "function f(a, b) { return a; } f(1);"
+    "function: expected 2 arguments, found 1"
+  assert_failure_message "too many arguments retain their diagnostic"
+    "function f(a) { return a; } f(1, 2);"
+    "function: expected 1 arguments, found 2"
+  assert_run "the final permitted call depth still returns normally"
+    "function recur(n) { if (n ≟ 0) return 7; return recur(n - 1); } console.log(recur(255));"
+    ["7.0"]
+  assert_failure_message "one extra call retains the depth diagnostic"
+    "function recur(n) { if (n ≟ 0) return 7; return recur(n - 1); } recur(256);"
+    "function call depth exceeded 256"
+
+covering
+main : IO ()
+main = do
+  check_output_and_construction
+  check_dialect_syntax_and_operators
+  check_injected_file_hosts
+  check_structured_values_and_functions
+  check_json_data
+  check_paths_and_host_responses
+  check_rejected_runtime_operations
+  check_function_scope_transitions
   putStrLn "Field Mouse language and structured-runtime tests passed"

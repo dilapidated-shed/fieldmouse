@@ -1,0 +1,61 @@
+module Fieldmouse.Host_interface
+
+import Data.Text
+import Data.List
+import Data.Maybe
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+public export
+choice host_request one_of
+  read_text_request Text
+  write_text_request Text Text
+  append_text_request Text Text
+  file_exists_request Text
+  arguments_request
+  environment_request Text
+  list_directory_request Text
+  create_directory_request Text
+  exit_request Int
+  subprocess_request Text (List Text)
+
+public export
+choice host_response one_of
+  text_response Text
+  boolean_response Bool
+  done_response
+  texts_response (List Text)
+  optional_text_response (Maybe Text)
+  process_response Int Text
+
+public export
+Host : Type
+Host = host_request → IO (Either Text host_response)
+export
+host_request_name : host_request → Text
+host_request_name (read_text_request _) = "readText"
+host_request_name (write_text_request _ _) = "writeText"
+host_request_name (append_text_request _ _) = "appendText"
+host_request_name (file_exists_request _) = "fileExists"
+host_request_name arguments_request = "arguments"
+host_request_name (environment_request _) = "environment"
+host_request_name (list_directory_request _) = "listDirectory"
+host_request_name (create_directory_request _) = "createDirectory"
+host_request_name (exit_request _) = "exit"
+host_request_name (subprocess_request _ _) = "subprocess"
+
+export
+check_file_request_text_has_no_nul : host_request → Either Text ()
+check_file_request_text_has_no_nul request =
+  let texts : List Text = case request of
+        read_text_request path ⇒ [path]
+        write_text_request path contents ⇒ [path, contents]
+        append_text_request path contents ⇒ [path, contents]
+        file_exists_request path ⇒ [path]
+        list_directory_request path ⇒ [path]
+        create_directory_request path ⇒ [path]
+        _ ⇒ []
+   in if any (\text ⇒ elem '\0' (unpack text)) texts
+        then Left (host_request_name request ++ ": NUL is not supported in file text or paths")
+        else Right ()

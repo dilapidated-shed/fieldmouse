@@ -1,0 +1,20 @@
+var shared ← 0;
+function change(amount) {
+  shared ← shared + amount;
+  return shared;
+}
+function caller() {
+  var local ← 9;
+  var total ← change(2) + change(3);
+  console.log(local, total, shared);
+  return local;
+}
+console.log(caller(), shared);
+function finish_inside_loop() {
+  while (true) {
+    { return 7; }
+    console.log("unreachable inside loop");
+  }
+  console.log("unreachable after loop");
+}
+console.log(finish_inside_loop());

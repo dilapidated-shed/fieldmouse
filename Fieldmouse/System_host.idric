@@ -1,0 +1,56 @@
+module Fieldmouse.System_host
+
+import Data.Text
+import Data.List
+import Data.Maybe
+import System.File
+import System.Directory
+import System
+import Fieldmouse.Host_interface
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+describe_file_operation_failure : Text → Text → FileError → Text
+describe_file_operation_failure operation path problem =
+  operation ++ " '" ++ path ++ "': " ++ show problem
+export
+execute_system_request : List Text → Host
+execute_system_request arguments (read_text_request path) = do
+  result ← readFile path
+  pure (case result of
+    Left problem ⇒ Left (describe_file_operation_failure "readText" path problem)
+    Right text ⇒ Right (text_response text))
+execute_system_request arguments (write_text_request path contents) = do
+  result ← writeFile path contents
+  pure (case result of
+    Left problem ⇒ Left (describe_file_operation_failure "writeText" path problem)
+    Right () ⇒ Right done_response)
+execute_system_request arguments (append_text_request path contents) = do
+  result ← appendFile path contents
+  pure (case result of
+    Left problem ⇒ Left (describe_file_operation_failure "appendText" path problem)
+    Right () ⇒ Right done_response)
+execute_system_request arguments (file_exists_request path) = do
+  found ← exists path
+  pure (Right (boolean_response found))
+execute_system_request arguments arguments_request = pure (Right (texts_response arguments))
+execute_system_request arguments (environment_request name) = do
+  text ← getEnv name
+  pure (Right (optional_text_response text))
+execute_system_request arguments (list_directory_request path) = do
+  result ← listDir path
+  pure (case result of
+    Left problem ⇒ Left (describe_file_operation_failure "listDirectory" path problem)
+    Right names ⇒ Right (texts_response (sort names)))
+execute_system_request arguments (create_directory_request path) = do
+  result ← createDir path
+  pure (case result of
+    Left problem ⇒ Left (describe_file_operation_failure "createDirectory" path problem)
+    Right () ⇒ Right done_response)
+execute_system_request arguments (exit_request _) = pure (Right done_response)
+execute_system_request arguments (subprocess_request program parameter_names) = do
+  -- The inherited escaped process adapter quotes every argv element.
+  -- stdout is captured; stderr is inherited. No shell source is accepted.
+  (text, status) ← System.Escaped.run (program :: parameter_names)
+  pure (Right (process_response status text))

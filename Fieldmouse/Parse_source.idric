@@ -1,0 +1,264 @@
+module Fieldmouse.Parse_source
+
+import Data.Text
+import Data.List
+import Data.Maybe
+import Fieldmouse.Language_types
+import Fieldmouse.Tokenize_source
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+Parser : Type → Type
+Parser result = List token → Either Text (result, List token)
+expect_symbol : Text → List token → Either Text (List token)
+expect_symbol expected (symbol_token actual :: rest) =
+  if actual ≟ expected
+    then Right rest
+    else Left ("expected '" ++ expected ++ "', found '" ++ actual ++ "'")
+expect_symbol expected _ = Left ("expected '" ++ expected ++ "'")
+
+drop_semicolon : List token → List token
+drop_semicolon (symbol_token ";" :: rest) = rest
+drop_semicolon rest = rest
+
+parse_left_associative : Parser expression → List binary_operator → Parser expression
+parse_left_associative smaller operators input = do
+  (first, rest) ← smaller input
+  continue first rest
+  where
+    continue : expression → List token → Either Text (expression, List token)
+    continue left input@(symbol_token text :: rest) =
+      case matching_binary_operator text operators of
+        Just operator ⇒ do
+          (right, after) ← smaller rest
+          continue (binary_expression operator left right) after
+        Nothing ⇒ Right (left, input)
+    continue left rest = Right (left, rest)
+
+mutual
+  parse_expression : Parser expression
+  parse_expression = parse_assignment_expression
+
+  parse_assignment_expression : Parser expression
+  parse_assignment_expression input = do
+    (left, rest) ← parse_logical_or_expression input
+    case rest of
+      symbol_token "←" :: after_arrow ⇒
+        case left of
+          variable_expression name ⇒ do
+            (right, remaining) ← parse_assignment_expression after_arrow
+            Right (assignment_expression name right, remaining)
+          property_expression owner key ⇒ do
+            (right, remaining) ← parse_assignment_expression after_arrow
+            Right (property_assignment owner key right, remaining)
+          _ ⇒ Left "left side of assignment must be a variable or property"
+      symbol_token "→" :: after_arrow ⇒ do
+        (target, remaining) ← parse_postfix after_arrow
+        case target of
+          variable_expression name ⇒ Right (assignment_expression name left, remaining)
+          property_expression owner key ⇒ Right (property_assignment owner key left, remaining)
+          _ ⇒ Left "right side of rightward assignment must be a variable or property"
+      _ ⇒ Right (left, rest)
+
+  parse_logical_or_expression : Parser expression
+  parse_logical_or_expression = parse_left_associative parse_logical_and_expression [binary_or]
+
+  parse_logical_and_expression : Parser expression
+  parse_logical_and_expression = parse_left_associative parse_equality [binary_and]
+
+  parse_equality : Parser expression
+  parse_equality =
+    parse_left_associative parse_comparison
+      [binary_equal, binary_not_equal, binary_strict_equal]
+
+  parse_comparison : Parser expression
+  parse_comparison =
+    parse_left_associative parse_addition
+      [binary_less, binary_less_equal, binary_greater, binary_greater_equal]
+
+  parse_addition : Parser expression
+  parse_addition =
+    parse_left_associative parse_multiplication [binary_add, binary_subtract]
+
+  parse_multiplication : Parser expression
+  parse_multiplication =
+    parse_left_associative parse_unary
+      [binary_multiply, binary_divide, binary_remainder]
+
+  parse_unary : Parser expression
+  parse_unary input@(symbol_token text :: rest) =
+    case parse_unary_operator text of
+      Just operator ⇒ do
+        (body, remaining) ← parse_unary rest
+        Right (unary_expression operator body, remaining)
+      Nothing ⇒ parse_postfix input
+  parse_unary input = parse_postfix input
+
+  parse_postfix : Parser expression
+  parse_postfix input = do
+    (first, rest) ← parse_primary input
+    continue first rest
+    where
+      continue : expression → Parser expression
+      continue owner (symbol_token "." :: word_token name :: rest) =
+        continue (property_expression owner (literal_expression (string_value name))) rest
+      continue owner (symbol_token "[" :: rest) = do
+        (key, after_key) ← parse_expression rest
+        after_close ← expect_symbol "]" after_key
+        continue (property_expression owner key) after_close
+      continue callee (symbol_token "(" :: rest) = do
+        (arguments, remaining) ← parse_comma_separated_expressions ")" rest
+        continue (call_expression callee arguments) remaining
+      continue first remaining = Right (first, remaining)
+
+  parse_comma_separated_expressions : Text → Parser (List expression)
+  parse_comma_separated_expressions close input@(symbol_token actual :: rest) =
+    if actual ≟ close then Right ([], rest) else parse_nonempty_comma_separated_expressions close input
+  parse_comma_separated_expressions close input = parse_nonempty_comma_separated_expressions close input
+
+  parse_nonempty_comma_separated_expressions : Text → Parser (List expression)
+  parse_nonempty_comma_separated_expressions close input = do
+    (first, rest) ← parse_expression input
+    case rest of
+      symbol_token "," :: after_comma ⇒ do
+        (later, remaining) ← parse_nonempty_comma_separated_expressions close after_comma
+        Right (first :: later, remaining)
+      _ ⇒ do
+        after_close ← expect_symbol close rest
+        Right ([first], after_close)
+
+  parse_object_members : Parser (List (Text, expression))
+  parse_object_members (symbol_token "}" :: rest) = Right ([], rest)
+  parse_object_members input = parse_nonempty_object_members input
+
+  parse_nonempty_object_members : Parser (List (Text, expression))
+  parse_nonempty_object_members input = do
+    (name, rest) ← parse_property_name input
+    after_colon ← expect_symbol ":" rest
+    (body, after_body) ← parse_expression after_colon
+    case after_body of
+      symbol_token "," :: after_comma ⇒ do
+        (later, remaining) ← parse_nonempty_object_members after_comma
+        Right ((name, body) :: later, remaining)
+      _ ⇒ do
+        after_close ← expect_symbol "}" after_body
+        Right ([(name, body)], after_close)
+
+  parse_property_name : Parser Text
+  parse_property_name (word_token name :: rest) = Right (name, rest)
+  parse_property_name (text_token name :: rest) = Right (name, rest)
+  parse_property_name _ = Left "object property requires a name or text key"
+
+  parse_parameters : Parser (List Text)
+  parse_parameters (symbol_token ")" :: rest) = Right ([], rest)
+  parse_parameters input = parse_nonempty_parameters input
+
+  parse_nonempty_parameters : Parser (List Text)
+  parse_nonempty_parameters (word_token name :: symbol_token "," :: rest) = do
+    (later, remaining) ← parse_nonempty_parameters rest
+    if elem name later then Left "duplicate function parameter" else Right (name :: later, remaining)
+  parse_nonempty_parameters (word_token name :: symbol_token ")" :: rest) = Right ([name], rest)
+  parse_nonempty_parameters _ = Left "expected function parameter or ')'"
+
+  parse_primary : Parser expression
+  parse_primary (number_token text :: rest) =
+    case parseDouble text of
+      Just parsed ⇒ Right (literal_expression (number_value parsed), rest)
+      Nothing ⇒ Left ("invalid number '" ++ text ++ "'")
+  parse_primary (text_token text :: rest) = Right (literal_expression (string_value text), rest)
+  parse_primary (word_token "true" :: rest) = Right (literal_expression (boolean_value True), rest)
+  parse_primary (word_token "Ø" :: rest) = Right (literal_expression (boolean_value False), rest)
+  parse_primary (symbol_token "Ø" :: rest) = Right (literal_expression (boolean_value False), rest)
+  parse_primary (word_token "null" :: rest) = Right (literal_expression null_value, rest)
+  parse_primary (word_token "undefined" :: rest) = Right (literal_expression undefined_value, rest)
+  parse_primary (word_token "function" :: symbol_token "(" :: rest) = do
+    (parameter_names, after_parameters) ← parse_parameters rest
+    after_open ← expect_symbol "{" after_parameters
+    (body, remaining) ← parse_function_block after_open
+    Right (function_expression parameter_names body, remaining)
+  parse_primary (symbol_token "[" :: rest) = do
+    (members, remaining) ← parse_comma_separated_expressions "]" rest
+    Right (array_expression members, remaining)
+  parse_primary (symbol_token "{" :: rest) = do
+    (members, remaining) ← parse_object_members rest
+    Right (object_expression members, remaining)
+  parse_primary (word_token name :: rest) = Right (variable_expression name, rest)
+  parse_primary (symbol_token "(" :: rest) = do
+    (inside, remaining) ← parse_expression rest
+    after_close ← expect_symbol ")" remaining
+    Right (inside, after_close)
+  parse_primary [] = Left "expected expression, found end of input"
+  parse_primary _ = Left "expected expression"
+
+  parse_function_block : Parser (List statement)
+  parse_function_block [] = Left "unterminated function body"
+  parse_function_block (symbol_token "}" :: rest) = Right ([], rest)
+  parse_function_block input = do
+    (first, rest) ← parse_statement input
+    (later, remaining) ← parse_function_block rest
+    Right (first :: later, remaining)
+
+  parse_statement : Parser statement
+  parse_statement (word_token keyword :: word_token name :: rest) =
+    if elem keyword ["var", "let", "const"]
+      then case rest of
+        symbol_token "←" :: after_arrow ⇒ do
+          (initial, remaining) ← parse_expression after_arrow
+          Right (define_statement name initial, drop_semicolon remaining)
+        _ ⇒ Right (define_statement name (literal_expression undefined_value), drop_semicolon rest)
+      else parse_other_statement (word_token keyword :: word_token name :: rest)
+  parse_statement input = parse_other_statement input
+
+  parse_other_statement : Parser statement
+  parse_other_statement (word_token "function" :: word_token name :: symbol_token "(" :: rest) = do
+    (parameter_names, after_parameters) ← parse_parameters rest
+    after_open ← expect_symbol "{" after_parameters
+    (body, remaining) ← parse_function_block after_open
+    Right (define_statement name (function_expression parameter_names body), remaining)
+  parse_other_statement (word_token "return" :: symbol_token ";" :: rest) =
+    Right (return_statement (literal_expression undefined_value), rest)
+  parse_other_statement (word_token "return" :: rest) = do
+    (body, remaining) ← parse_expression rest
+    Right (return_statement body, drop_semicolon remaining)
+  parse_other_statement (word_token "if" :: symbol_token "(" :: rest) = do
+    (condition, after_condition) ← parse_expression rest
+    after_close ← expect_symbol ")" after_condition
+    (yes_branch, after_yes) ← parse_statement after_close
+    case after_yes of
+      word_token "else" :: after_else ⇒ do
+        (no_branch, remaining) ← parse_statement after_else
+        Right (if_statement condition yes_branch (Just no_branch), remaining)
+      _ ⇒ Right (if_statement condition yes_branch Nothing, after_yes)
+  parse_other_statement (word_token "while" :: symbol_token "(" :: rest) = do
+    (condition, after_condition) ← parse_expression rest
+    after_close ← expect_symbol ")" after_condition
+    (body, remaining) ← parse_statement after_close
+    Right (while_statement condition body, remaining)
+  parse_other_statement (symbol_token "{" :: rest) = do
+    (body, remaining) ← parse_block rest
+    Right (block_statement body, remaining)
+  parse_other_statement input = do
+    (body, remaining) ← parse_expression input
+    Right (expression_statement body, drop_semicolon remaining)
+
+  parse_block : List token → Either Text (List statement, List token)
+  parse_block [] = Left "unterminated block"
+  parse_block (symbol_token "}" :: rest) = Right ([], rest)
+  parse_block input = do
+    (first, rest) ← parse_statement input
+    (later, remaining) ← parse_block rest
+    Right (first :: later, remaining)
+
+parse_program_tokens : List token → Either Text (List statement)
+parse_program_tokens [] = Right []
+parse_program_tokens input = do
+  (first, rest) ← parse_statement input
+  later ← parse_program_tokens rest
+  Right (first :: later)
+
+public export
+parse_program_source : Text → Either Text (List statement)
+parse_program_source source = do
+  tokens ← tokenize_source source
+  parse_program_tokens tokens

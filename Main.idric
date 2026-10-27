@@ -3,45 +3,45 @@ module Main
 import Fieldmouse
 import System
 import System.File
-import Data.String
+import Data.Text
 
-print_output : List String -> IO ()
+print_output : List Text → IO ()
 print_output [] = pure ()
 print_output (line :: rest) = do
   putStrLn line
   print_output rest
 
-report_failure : String -> IO ()
+report_failure : Text → IO ()
 report_failure message = do
   putStrLn ("fieldmouse: " ++ message)
   exitFailure
 
 covering
-run_source : List String -> String -> IO ()
+run_source : List Text → Text → IO ()
 run_source arguments source = do
-  result <- run_command arguments source
+  result ← run_command arguments source
   case result of
-    Left problem => report_failure problem
-    Right (output, status) => do
+    Left problem ⇒ report_failure problem
+    Right (output, status) ⇒ do
       print_output output
       exitWith (cast status)
 
 covering
-run_file : String -> List String -> IO ()
+run_file : Text → List Text → IO ()
 run_file path arguments = do
-  result <- readFile path
+  result ← readFile path
   case result of
-    Left problem => report_failure ("cannot read " ++ path ++ ": " ++ show problem)
-    Right source => run_source arguments source
+    Left problem ⇒ report_failure ("cannot read " ++ path ++ ": " ++ show problem)
+    Right source ⇒ run_source arguments source
 
 covering
 main : IO ()
 main = do
-  arguments <- getArgs
+  arguments ← getArgs
   case arguments of
-    _ :: "-e" :: source :: rest => run_source rest source
-    _ :: path :: rest =>
+    _ :: "-e" :: source :: rest ⇒ run_source rest source
+    _ :: path :: rest ⇒
       if isPrefixOf "-" path
         then report_failure "usage: fieldmouse [-e source | file] [arguments...]"
         else run_file path rest
-    _ => report_failure "usage: fieldmouse [-e source | file]"
+    _ ⇒ report_failure "usage: fieldmouse [-e source | file]"

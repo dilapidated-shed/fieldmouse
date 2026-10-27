@@ -14,6 +14,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 ln -s "$project_dir/Fieldmouse.idric" "$boundary_tmp/Fieldmouse.idric"
+ln -s "$project_dir/Fieldmouse" "$boundary_tmp/Fieldmouse"
 
 expect_rejected() {
   fixture=$1

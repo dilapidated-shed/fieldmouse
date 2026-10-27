@@ -1,0 +1,184 @@
+module Fieldmouse.Runtime_storage
+
+import Data.Text
+import Data.List
+import Data.Maybe
+import Fieldmouse.Language_types
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+-- Identities belong to interpreter storage; no host handles enter this model.
+public export
+record Aggregate where
+  constructor AggregateContents
+  array_length : Maybe Number
+  properties : List (Text, value)
+
+public export
+record Closure where
+  constructor CapturedFunction
+  parameter_names : List Text
+  body : List statement
+  variable_bindings : List (Text, Number)
+
+public export
+record Runtime where
+  constructor ScriptState
+  variable_bindings : List (Text, Number)
+  variable_cells : List (Number, value)
+  stored_arrays_and_objects : List (Number, Aggregate)
+  stored_functions : List (Number, Closure)
+  next_storage_identity : Number
+  -- Prepend while evaluating; restore chronological order only at the run boundary.
+  console_lines_reversed : List Text
+  function_return_value : Maybe value
+  program_exit_status : Maybe Int
+  function_call_depth : Number
+
+initial_state : Runtime
+initial_state = ScriptState [] [] [] [] 0 [] Nothing Nothing 0
+
+export
+find_entry_by_key : Eq key ⇒ key → List (key, item) → Maybe item
+find_entry_by_key name [] = Nothing
+find_entry_by_key name ((candidate, found) :: rest) =
+  if name ≟ candidate then Just found else find_entry_by_key name rest
+
+export
+replace_entry_or_append : Eq key ⇒ key → item → List (key, item) → List (key, item)
+replace_entry_or_append name found [] = [(name, found)]
+replace_entry_or_append name found ((candidate, previous) :: rest) =
+  if name ≟ candidate then (name, found) :: rest
+    else (candidate, previous) :: replace_entry_or_append name found rest
+
+export
+declare_variable_with_new_cell : Text → value → Runtime → Runtime
+declare_variable_with_new_cell name found state =
+  let identity = state.next_storage_identity in
+  { variable_bindings := (name, identity) :: state.variable_bindings,
+    variable_cells := (identity, found) :: state.variable_cells,
+    next_storage_identity := S identity } state
+
+export
+read_variable_value : Text → Runtime → Either Text value
+read_variable_value name state = do
+  identity ← maybe (Left ("unknown variable '" ++ name ++ "'")) Right
+                   (find_entry_by_key name state.variable_bindings)
+  maybe (Left "invalid binding identity") Right (find_entry_by_key identity state.variable_cells)
+
+export
+assign_variable_or_create_binding : Text → value → Runtime → Runtime
+assign_variable_or_create_binding name found state =
+  case find_entry_by_key name state.variable_bindings of
+    Nothing ⇒ declare_variable_with_new_cell name found state
+    Just identity ⇒ { variable_cells := replace_entry_or_append identity found state.variable_cells } state
+
+assign_identity_and_store_properties : Aggregate → Runtime → (value, Runtime)
+assign_identity_and_store_properties contents state =
+  let identity = state.next_storage_identity
+      result = case contents.array_length of
+        Nothing ⇒ object_value identity
+        Just _ ⇒ array_value identity
+   in (result, { stored_arrays_and_objects := (identity, contents) :: state.stored_arrays_and_objects,
+                 next_storage_identity := S identity } state)
+
+export
+create_object_from_members : List (Text, value) → Runtime → (value, Runtime)
+create_object_from_members members =
+  -- Repeated keys keep their first position and their last value.
+  assign_identity_and_store_properties (AggregateContents Nothing
+    (foldl (\kept, pair ⇒ replace_entry_or_append (fst pair) (snd pair) kept) [] members))
+
+number_array_members_from : Number → List value → List (Text, value)
+number_array_members_from index [] = []
+number_array_members_from index (first :: rest) = (show index, first) :: number_array_members_from (S index) rest
+
+export
+create_array_from_values : List value → Runtime → (value, Runtime)
+create_array_from_values members =
+  -- These canonical sequential keys are unique by construction.
+  assign_identity_and_store_properties (AggregateContents (Just (length members)) (number_array_members_from 0 members))
+
+export
+create_runtime_with_console : Runtime
+create_runtime_with_console =
+  let (console_object, state_with_console) =
+        create_object_from_members [("log", native_value native_log)] initial_state
+   in declare_variable_with_new_cell "console" console_object state_with_console
+
+export
+collect_console_output_and_exit_status : Runtime → (List Text, Int)
+collect_console_output_and_exit_status final_state =
+  (reverse final_state.console_lines_reversed, fromMaybe 0 final_state.program_exit_status)
+
+export
+convert_value_to_property_key : value → Either Text Text
+convert_value_to_property_key (string_value text) = Right text
+convert_value_to_property_key (number_value number) =
+  if number >= 0 && number ≟ cast (the Integer (cast number))
+     then Right (show (the Integer (cast number)))
+     else Left "property number must be a nonnegative integer"
+convert_value_to_property_key _ = Left "property key must be text or a nonnegative integer"
+
+read_canonical_array_index : Text → Either Text Number
+read_canonical_array_index text =
+  if text /= "" && all isDigit (unpack text)
+     then let index : Number = cast text in
+          if show index ≟ text then Right index else Left "array index must be canonical"
+     else Left "array index must be a nonnegative integer"
+
+export
+read_property : Runtime → value → Text → Either Text value
+read_property state (array_value identity) key = do
+  contents ← maybe (Left "invalid array identity") Right (find_entry_by_key identity state.stored_arrays_and_objects)
+  if key ≟ "length"
+     then Right (number_value (cast (fromMaybe 0 contents.array_length)))
+     else do
+       index ← read_canonical_array_index key
+       Right (fromMaybe undefined_value (find_entry_by_key key contents.properties))
+read_property state (object_value identity) key = do
+  contents ← maybe (Left "invalid object identity") Right (find_entry_by_key identity state.stored_arrays_and_objects)
+  Right (fromMaybe undefined_value (find_entry_by_key key contents.properties))
+read_property state (string_value text) "length" = Right (number_value (cast (length text)))
+read_property _ _ _ = Left "property access requires an array, object, or text length"
+
+export
+write_property : Runtime → value → Text → value → Either Text Runtime
+write_property state (array_value identity) key found = do
+  contents ← maybe (Left "invalid array identity") Right (find_entry_by_key identity state.stored_arrays_and_objects)
+  index ← read_canonical_array_index key
+  let size = max (S index) (fromMaybe 0 contents.array_length)
+  let changed = AggregateContents (Just size) (replace_entry_or_append key found contents.properties)
+  Right ({ stored_arrays_and_objects := replace_entry_or_append identity changed state.stored_arrays_and_objects } state)
+write_property state (object_value identity) key found = do
+  contents ← maybe (Left "invalid object identity") Right (find_entry_by_key identity state.stored_arrays_and_objects)
+  let changed : Aggregate = { properties := replace_entry_or_append key found contents.properties } contents
+  Right ({ stored_arrays_and_objects := replace_entry_or_append identity changed state.stored_arrays_and_objects } state)
+write_property _ _ _ _ = Left "property assignment requires an array or object"
+export
+require_text_values : List value → Either Text (List Text)
+require_text_values [] = Right []
+require_text_values (string_value text :: rest) = do
+  later ← require_text_values rest
+  Right (text :: later)
+require_text_values _ = Left "expected an array of text"
+
+export
+read_dense_text_array : Runtime → value → Either Text (List Text)
+read_dense_text_array state (array_value identity) = do
+  contents ← maybe (Left "invalid array identity") Right (find_entry_by_key identity state.stored_arrays_and_objects)
+  gather contents 0 (fromMaybe 0 contents.array_length)
+  where
+    gather : Aggregate → Number → Number → Either Text (List Text)
+    gather contents index size =
+      if index >= size then Right [] else
+      case find_entry_by_key (show index) contents.properties of
+        Just (string_value text) ⇒ do
+          later ← gather contents (S index) size
+          Right (text :: later)
+        _ ⇒ Left "expected a dense array of text"
+read_dense_text_array _ _ = Left "expected an array of text"
+export
+statement_sequence_has_finished : Runtime → Bool
+statement_sequence_has_finished state = isJust state.function_return_value || isJust state.program_exit_status

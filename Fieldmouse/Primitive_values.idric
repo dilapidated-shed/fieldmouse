@@ -1,0 +1,108 @@
+module Fieldmouse.Primitive_values
+
+import Data.Text
+import Data.List
+import Data.Maybe
+import Fieldmouse.Language_types
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+public export
+display_value_for_console : value → Text
+display_value_for_console undefined_value = "undefined"
+display_value_for_console null_value = "null"
+display_value_for_console (boolean_value True) = "true"
+display_value_for_console (boolean_value False) = "false"
+display_value_for_console (number_value number) = show number
+display_value_for_console (string_value text) = text
+display_value_for_console (array_value _) = "[array]"
+display_value_for_console (object_value _) = "[object]"
+display_value_for_console (function_value _) = "[function]"
+display_value_for_console (native_value native) = "[native " ++ native_function_text native ++ "]"
+
+export
+value_is_true_in_condition : value → Bool
+value_is_true_in_condition undefined_value = False
+value_is_true_in_condition null_value = False
+value_is_true_in_condition (boolean_value truth) = truth
+value_is_true_in_condition (number_value number) = number /= 0.0
+value_is_true_in_condition (string_value text) = text /= ""
+value_is_true_in_condition _ = True
+
+export
+convert_value_to_number : value → Either Text Double
+convert_value_to_number (number_value number) = Right number
+convert_value_to_number (boolean_value True) = Right 1.0
+convert_value_to_number (boolean_value False) = Right 0.0
+convert_value_to_number null_value = Right 0.0
+convert_value_to_number (string_value text) =
+  case parseDouble text of
+    Just number ⇒ Right number
+    Nothing ⇒ Left ("cannot convert '" ++ text ++ "' to number")
+convert_value_to_number undefined_value = Left "cannot convert undefined to number"
+convert_value_to_number _ = Left "cannot convert structured value or function to number"
+
+values_are_strictly_equal : value → value → Bool
+values_are_strictly_equal undefined_value undefined_value = True
+values_are_strictly_equal null_value null_value = True
+values_are_strictly_equal (boolean_value left) (boolean_value right) = left ≟ right
+values_are_strictly_equal (number_value left) (number_value right) = left ≟ right
+values_are_strictly_equal (string_value left) (string_value right) = left ≟ right
+values_are_strictly_equal (array_value left) (array_value right) = left ≟ right
+values_are_strictly_equal (object_value left) (object_value right) = left ≟ right
+values_are_strictly_equal (function_value left) (function_value right) = left ≟ right
+values_are_strictly_equal (native_value left) (native_value right) = native_function_text left ≟ native_function_text right
+values_are_strictly_equal _ _ = False
+
+values_are_equal_after_coercion : value → value → Bool
+values_are_equal_after_coercion undefined_value null_value = True
+values_are_equal_after_coercion null_value undefined_value = True
+values_are_equal_after_coercion undefined_value right = values_are_strictly_equal undefined_value right
+values_are_equal_after_coercion left undefined_value = values_are_strictly_equal left undefined_value
+values_are_equal_after_coercion null_value right = values_are_strictly_equal null_value right
+values_are_equal_after_coercion left null_value = values_are_strictly_equal left null_value
+values_are_equal_after_coercion (number_value left) (string_value right) =
+  case parseDouble right of
+    Just right_number ⇒ left ≟ right_number
+    Nothing ⇒ False
+values_are_equal_after_coercion (string_value left) (number_value right) =
+  case parseDouble left of
+    Just left_number ⇒ left_number ≟ right
+    Nothing ⇒ False
+values_are_equal_after_coercion (boolean_value left) right =
+  case convert_value_to_number right of
+    Right right_number ⇒ (if left then 1.0 else 0.0) ≟ right_number
+    Left _ ⇒ False
+values_are_equal_after_coercion left (boolean_value right) =
+  case convert_value_to_number left of
+    Right left_number ⇒ left_number ≟ (if right then 1.0 else 0.0)
+    Left _ ⇒ False
+values_are_equal_after_coercion left right = values_are_strictly_equal left right
+
+apply_numeric_operator : binary_operator → Double → Double → Either Text value
+apply_numeric_operator binary_add left right = Right (number_value (left + right))
+apply_numeric_operator binary_subtract left right = Right (number_value (left - right))
+apply_numeric_operator binary_multiply left right = Right (number_value (left * right))
+apply_numeric_operator binary_divide left right = Right (number_value (left ÷ right))
+apply_numeric_operator binary_remainder left right = Left "remainder is not implemented yet"
+apply_numeric_operator binary_less left right = Right (boolean_value (left < right))
+apply_numeric_operator binary_less_equal left right = Right (boolean_value (left <= right))
+apply_numeric_operator binary_greater left right = Right (boolean_value (left > right))
+apply_numeric_operator binary_greater_equal left right = Right (boolean_value (left >= right))
+apply_numeric_operator operator _ _ =
+  Left
+    ("unsupported numeric operator '" ++
+     binary_operator_text operator ++ "'")
+
+export
+apply_binary_operator_to_values : binary_operator → value → value → Either Text value
+apply_binary_operator_to_values binary_add (string_value left) right = Right (string_value (left ++ display_value_for_console right))
+apply_binary_operator_to_values binary_add left (string_value right) = Right (string_value (display_value_for_console left ++ right))
+apply_binary_operator_to_values binary_equal left right = Right (boolean_value (values_are_equal_after_coercion left right))
+apply_binary_operator_to_values binary_not_equal left right = Right (boolean_value (not (values_are_equal_after_coercion left right)))
+apply_binary_operator_to_values binary_strict_equal left right = Right (boolean_value (values_are_strictly_equal left right))
+apply_binary_operator_to_values operator left right = do
+  left_number ← convert_value_to_number left
+  right_number ← convert_value_to_number right
+  apply_numeric_operator operator left_number right_number

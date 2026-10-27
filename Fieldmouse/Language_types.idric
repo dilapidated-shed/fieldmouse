@@ -1,0 +1,194 @@
+module Fieldmouse.Language_types
+
+import Data.Text
+import Data.List
+import Data.Maybe
+
+-- Covering preserves the interpreter's deliberate recursion contract.
+%default covering
+
+public export
+choice token one_of
+  word_token Text
+  number_token Text
+  text_token Text
+  symbol_token Text
+
+public export
+choice unary_operator one_of
+  unary_not
+  unary_negate
+  unary_positive
+
+public export
+choice binary_operator one_of
+  binary_or
+  binary_and
+  binary_equal
+  binary_not_equal
+  binary_strict_equal
+  binary_less
+  binary_less_equal
+  binary_greater
+  binary_greater_equal
+  binary_add
+  binary_subtract
+  binary_multiply
+  binary_divide
+  binary_remainder
+
+public export
+choice native_function one_of
+  native_read_text
+  native_write_text
+  native_append_text
+  native_file_exists
+  native_arguments
+  native_environment
+  native_list_directory
+  native_create_directory
+  native_exit
+  native_subprocess
+  native_parse_json
+  native_stringify_json
+  native_join_path
+  native_normalize_path
+  native_basename
+  native_dirname
+  native_log
+
+public export
+choice value one_of
+  undefined_value
+  null_value
+  boolean_value Bool
+  number_value Double
+  string_value Text
+  array_value Number
+  object_value Number
+  function_value Number
+  native_value native_function
+mutual
+  public export
+  choice expression one_of
+    literal_expression value
+    variable_expression Text
+    native_call_expression native_function (List expression)
+    unary_expression unary_operator expression
+    binary_expression binary_operator expression expression
+    assignment_expression Text expression
+    array_expression (List expression)
+    object_expression (List (Text, expression))
+    property_expression expression expression
+    property_assignment expression expression expression
+    call_expression expression (List expression)
+    function_expression (List Text) (List statement)
+
+  public export
+  choice statement one_of
+    define_statement Text expression
+    expression_statement expression
+    log_statement (List expression)
+    block_statement (List statement)
+    if_statement expression statement (Maybe statement)
+    while_statement expression statement
+    return_statement expression
+public export
+unary_operator_text : unary_operator → Text
+unary_operator_text unary_not = "!"
+unary_operator_text unary_negate = "-"
+unary_operator_text unary_positive = "+"
+
+public export
+parse_unary_operator : Text → Maybe unary_operator
+parse_unary_operator "!" = Just unary_not
+parse_unary_operator "-" = Just unary_negate
+parse_unary_operator "+" = Just unary_positive
+parse_unary_operator _ = Nothing
+
+public export
+binary_operator_text : binary_operator → Text
+binary_operator_text binary_or = "||"
+binary_operator_text binary_and = "&&"
+binary_operator_text binary_equal = "="
+binary_operator_text binary_not_equal = "≠"
+binary_operator_text binary_strict_equal = "≟"
+binary_operator_text binary_less = "<"
+binary_operator_text binary_less_equal = "<="
+binary_operator_text binary_greater = ">"
+binary_operator_text binary_greater_equal = ">="
+binary_operator_text binary_add = "+"
+binary_operator_text binary_subtract = "-"
+binary_operator_text binary_multiply = "*"
+binary_operator_text binary_divide = "/"
+binary_operator_text binary_remainder = "%"
+
+all_binary_operators : List binary_operator
+all_binary_operators =
+  [ binary_or
+  , binary_and
+  , binary_equal
+  , binary_not_equal
+  , binary_strict_equal
+  , binary_less
+  , binary_less_equal
+  , binary_greater
+  , binary_greater_equal
+  , binary_add
+  , binary_subtract
+  , binary_multiply
+  , binary_divide
+  , binary_remainder
+  ]
+
+export
+matching_binary_operator : Text → List binary_operator → Maybe binary_operator
+matching_binary_operator text [] = Nothing
+matching_binary_operator text (operator :: rest) =
+  if text ≟ binary_operator_text operator
+    then Just operator
+    else matching_binary_operator text rest
+
+public export
+parse_binary_operator : Text → Maybe binary_operator
+parse_binary_operator text = matching_binary_operator text all_binary_operators
+
+public export
+native_function_text : native_function → Text
+native_function_text native_read_text = "readText"
+native_function_text native_write_text = "writeText"
+native_function_text native_append_text = "appendText"
+native_function_text native_file_exists = "fileExists"
+native_function_text native_arguments = "arguments"
+native_function_text native_environment = "environment"
+native_function_text native_list_directory = "listDirectory"
+native_function_text native_create_directory = "createDirectory"
+native_function_text native_exit = "exit"
+native_function_text native_subprocess = "subprocess"
+native_function_text native_parse_json = "parseJson"
+native_function_text native_stringify_json = "stringifyJson"
+native_function_text native_join_path = "joinPath"
+native_function_text native_normalize_path = "normalizePath"
+native_function_text native_basename = "basename"
+native_function_text native_dirname = "dirname"
+native_function_text native_log = "console.log"
+
+public export
+parse_native_function : Text → Maybe native_function
+parse_native_function "readText" = Just native_read_text
+parse_native_function "writeText" = Just native_write_text
+parse_native_function "appendText" = Just native_append_text
+parse_native_function "fileExists" = Just native_file_exists
+parse_native_function "arguments" = Just native_arguments
+parse_native_function "environment" = Just native_environment
+parse_native_function "listDirectory" = Just native_list_directory
+parse_native_function "createDirectory" = Just native_create_directory
+parse_native_function "exit" = Just native_exit
+parse_native_function "subprocess" = Just native_subprocess
+parse_native_function "parseJson" = Just native_parse_json
+parse_native_function "stringifyJson" = Just native_stringify_json
+parse_native_function "joinPath" = Just native_join_path
+parse_native_function "normalizePath" = Just native_normalize_path
+parse_native_function "basename" = Just native_basename
+parse_native_function "dirname" = Just native_dirname
+parse_native_function _ = Nothing
