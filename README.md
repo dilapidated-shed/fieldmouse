@@ -73,6 +73,9 @@ Blocks preserve existing function/global binding scope. `var`, `let`, and
 | `normalizePath(path)` | Removes redundant separators/dots; preserves leading relative `..`; never climbs above absolute root. Empty result is `.`. |
 | `basename(path)`, `dirname(path)` | Name and parent of the normalized lexical path. |
 | `readText(path)` | Complete text; errors identify operation/path. |
+| `readBytes(path)` | Original file bytes as a dense array of numbers 0–255; no text decoding. Short reads fail. |
+| `codePoints(text)` | Unicode scalar values as a dense array; non-BMP characters occupy one element. |
+| `fromCodePoints(array)` | Dense array of integral Unicode scalars to text; rejects holes, nonnumbers, surrogates and out-of-range values. |
 | `writeText(path, text)` | Create/truncate without creating parents; returns undefined. |
 | `appendText(path, text)` | Create/append; returns undefined. |
 | `fileExists(path)` | Existing file-host existence behavior. |
@@ -85,6 +88,9 @@ JSON number formatting/key order are not Node byte-format compatibility.
 Numbers retain the interpreter's explicit Double representation.
 Paths are lexical, not a filesystem sandbox. File text/path arguments containing
 NUL fail explicitly rather than being truncated.
+`readBytes` preserves NUL and malformed UTF-8 bytes; it does not decode them.
+`codePoints` and `fromCodePoints` operate on text scalars, not UTF-8 bytes or
+UTF-16 code units. These operations do not add a general typed-array/Buffer API.
 
 The first subprocess host uses Idriç's existing escaped process adapter:
 each argument is quoted independently before the underlying synchronous shell

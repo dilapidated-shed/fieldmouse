@@ -10,6 +10,7 @@ import Data.Maybe
 public export
 choice host_request one_of
   read_text_request Text
+  read_bytes_request Text
   write_text_request Text Text
   append_text_request Text Text
   file_exists_request Text
@@ -23,6 +24,7 @@ choice host_request one_of
 public export
 choice host_response one_of
   text_response Text
+  bytes_response (List Bits8)
   boolean_response Bool
   done_response
   texts_response (List Text)
@@ -35,6 +37,7 @@ Host = host_request → IO (Either Text host_response)
 export
 host_request_name : host_request → Text
 host_request_name (read_text_request _) = "readText"
+host_request_name (read_bytes_request _) = "readBytes"
 host_request_name (write_text_request _ _) = "writeText"
 host_request_name (append_text_request _ _) = "appendText"
 host_request_name (file_exists_request _) = "fileExists"
@@ -50,6 +53,7 @@ check_file_request_text_has_no_nul : host_request → Either Text ()
 check_file_request_text_has_no_nul request =
   let texts : List Text = case request of
         read_text_request path ⇒ [path]
+        read_bytes_request path ⇒ [path]
         write_text_request path contents ⇒ [path, contents]
         append_text_request path contents ⇒ [path, contents]
         file_exists_request path ⇒ [path]

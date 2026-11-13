@@ -1,0 +1,3 @@
+ok: tests/rejected/ArbitraryOperator.idric rejected at its intended type boundary
+ok: tests/rejected/ArbitraryBinaryOperator.idric rejected at its intended type boundary
+ok: tests/rejected/ArbitraryNativeCall.idric rejected at its intended type boundary

@@ -112,6 +112,9 @@ DIFFERENT: Reading a missing object property/array slot yields undefined;
   reading a completely unknown global name fails.
 LIMITED: Text exposes .length only; do not assume text[0] or JS String
   methods. Unicode length is not promised to follow UTF-16 JS code units.
+LIMITED: codePoints(text) returns Unicode scalar values, and fromCodePoints(array)
+  validates a dense scalar array. These are Field Mouse APIs, not String methods.
+  Scalar values exclude surrogate codes and occupy the range 0 through 0x10FFFF.
 DIFFERENT: Non-primitive values render in console output as [array],
   [object], [function], or [native ...], not Node inspection strings.
 LIMITED: Numbers use Double, and formatting is runtime-specific: e.g.
@@ -138,6 +141,10 @@ HOST EFFECTS AND SECURITY
 -------------------------
 LIMITED: Text I/O is synchronous. There is no file removal, rename,
   recursive mkdir, filesystem stats, or general Node fs module here.
+LIMITED: readBytes(path) synchronously reads the file size observed at open into a
+  checked buffer and returns exact byte values, including NUL and malformed UTF-8.
+  A short read fails; concurrent file growth is not an atomic snapshot guarantee.
+  No UTF-8 decoding, streaming or byte-write operation is supplied by this API.
 LIMITED: createDirectory creates a single directory. listDirectory
   supplies sorted names; lexical path helpers do not consult disk state.
 LIMITED: NUL bytes in host file text/path arguments are rejected.

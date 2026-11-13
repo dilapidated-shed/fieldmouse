@@ -1,0 +1,21 @@
+field	value
+source_base	1b18318de1a69991d080df4ea9625a21da9b1cd7
+source_state	UNCOMMITTED when tests ran; final commit supplied in handoff
+compiler_source	94dfd99bd3e376507fedc8611053b7173b2519f0
+compiler_identity	Idris 2, version 0.8.0-94dfd99bd
+target	Linux x86_64; compiled Chez payload; declared Chez10.4.1 runtime
+build_application	PASS: owned compiler --build fieldmouse.ipkg with matching IDRIS2_PREFIX
+build_tests	PASS: owned compiler --build tests.ipkg after final do-expression source repair
+language_execution	PASS:114 checks, including22new byte/scalar controls; language-tests.log
+compiler_refusals	PASS:three inherited unary/binary/native fixtures; type-refusals.log
+language_log_sha256	5612bdd1b1c4f44cf57f69087db03ec01b362be6ad6405062d4f8d52a2db08f8
+language_types_sha256	1c1032e73a9860ec32cd69c743a4093806f8c458c5ab1a416e6c62101c25e656
+host_interface_sha256	1ec883117a2a1df0043a94278abf8a50082817da54371287c946a47235b8e3e2
+system_host_sha256	b3ec93956f8ec52cb636e71f399dfaff98a85165c1fc5d8a884de2c4d723c76f
+builtin_functions_sha256	5fb369e99c1f1ab3c337dc53782b286bf6d4d491bec9d95b2f5fc67490497c18
+tests_sha256	e9140aa32f52ddfd4c7d30fbcec530aa2d66ef5f5f69928cbefacc27d81503f5
+launcher_sha256	0a44161271cdc6bb889fd5c21cb558f1bf1f1b0404f54681521302d91e6152df
+compiled_payload_sha256	5e1a2585b1504136a95b0343a285f17775945a29a2ba669c9550693899a8750e
+support_library_sha256	52b51595f0b483970567d5d13c9d4413e193115501e30014f89eb4470e4ecafe
+node_execution	NOT_RUN for this acceptance; no Node dependency in runtime or new tests
+physical_acceptance	NOT_APPLICABLE to this host-bound change

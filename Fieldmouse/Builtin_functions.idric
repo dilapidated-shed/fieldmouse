@@ -21,6 +21,7 @@ describe_builtin_argument_count_error native expected actual =
 
 prepare_host_request_from_arguments : Runtime → native_function → List value → Either Text host_request
 prepare_host_request_from_arguments state native_read_text [string_value path] = Right (read_text_request path)
+prepare_host_request_from_arguments state native_read_bytes [string_value path] = Right (read_bytes_request path)
 prepare_host_request_from_arguments state native_write_text [string_value path, string_value contents] = Right (write_text_request path contents)
 prepare_host_request_from_arguments state native_append_text [string_value path, string_value contents] = Right (append_text_request path contents)
 prepare_host_request_from_arguments state native_file_exists [string_value path] = Right (file_exists_request path)
@@ -52,6 +53,8 @@ prepare_host_request_from_arguments state native arguments =
         else Left (native_function_text native ++ ": invalid argument types")
 import_host_response_into_runtime : Runtime → host_request → host_response → Either Text (value, Runtime)
 import_host_response_into_runtime state (read_text_request _) (text_response text) = Right (string_value text, state)
+import_host_response_into_runtime state (read_bytes_request _) (bytes_response bytes) =
+  Right (create_array_from_values (map (number_value . cast) bytes) state)
 import_host_response_into_runtime state (write_text_request _ _) done_response = Right (undefined_value, state)
 import_host_response_into_runtime state (append_text_request _ _) done_response = Right (undefined_value, state)
 import_host_response_into_runtime state (file_exists_request _) (boolean_response truth) = Right (boolean_value truth, state)
@@ -76,9 +79,40 @@ perform_checked_host_request host state request =
         Left problem ⇒ Left problem
         Right response_value ⇒ import_host_response_into_runtime state request response_value)
 
+read_unicode_scalar : value → Either Text Char
+read_unicode_scalar (number_value number) =
+  if number >= 0 && number <= 1114111 && number ≟ cast (the Int (cast number))
+    then let scalar : Int = cast number in
+         if scalar >= 55296 && scalar <= 57343
+           then Left "fromCodePoints: surrogate is not a Unicode scalar"
+           else Right (cast scalar)
+    else Left "fromCodePoints: expected an integral Unicode scalar"
+read_unicode_scalar _ = Left "fromCodePoints: expected a dense array of Unicode scalars"
+
+text_from_scalar_array : Runtime → value → Either Text Text
+text_from_scalar_array state source@(array_value _) = do
+  number_value size ← read_property state source "length"
+    | _ ⇒ Left "fromCodePoints: invalid array length"
+  characters ← gather 0 (cast size)
+  Right (pack characters)
+  where
+    gather : Number → Number → Either Text (List Char)
+    gather index size =
+      if index >= size then Right [] else do
+        found ← read_property state source (show index)
+        character ← read_unicode_scalar found
+        rest ← gather (S index) size
+        Right (character :: rest)
+text_from_scalar_array _ _ = Left "fromCodePoints: expected an array of Unicode scalars"
+
 execute_builtin_in_running_program : Host → Runtime → native_function → List value → IO (Either Text (value, Runtime))
 execute_builtin_in_running_program host state native_log arguments =
   pure (Right (undefined_value, { console_lines_reversed := joinBy " " (map display_value_for_console arguments) :: state.console_lines_reversed } state))
+execute_builtin_in_running_program host state native_code_points [string_value text] =
+  pure (Right (create_array_from_values (map (number_value . cast . ord) (unpack text)) state))
+execute_builtin_in_running_program host state native_from_code_points [found] =
+  pure (do text ← text_from_scalar_array state found
+           Right (string_value text, state))
 execute_builtin_in_running_program host state native_parse_json [string_value text] =
   pure (case parse_json_text text of
     Left problem ⇒ Left ("parseJson: malformed JSON: " ++ problem)
