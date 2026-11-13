@@ -76,6 +76,9 @@ These names, rather than Node's standard objects, are current entry points:
 - `arguments()`, `environment(name)`, `exit(integerStatus)`.
 - `readText(path)`, `writeText(path, text)`, `appendText(path, text)`,
   `fileExists(path)`, `listDirectory(path)`, `createDirectory(path)`.
+- `readBytes(path)` preserves source bytes as a dense 0–255 number array.
+  `codePoints(text)` and `fromCodePoints(array)` expose validated Unicode scalars,
+  including NUL and characters above U+FFFF; neither is UTF-8 decoding.
 - `joinPath(parts...)`, `normalizePath(path)`, `basename(path)`,
   `dirname(path)` (lexical POSIX paths).
 - `parseJson(text)`, `stringifyJson(value)`.

@@ -40,6 +40,9 @@ choice binary_operator one_of
 public export
 choice native_function one_of
   native_read_text
+  native_read_bytes
+  native_code_points
+  native_from_code_points
   native_write_text
   native_append_text
   native_file_exists
@@ -156,6 +159,9 @@ parse_binary_operator text = matching_binary_operator text all_binary_operators
 public export
 native_function_text : native_function → Text
 native_function_text native_read_text = "readText"
+native_function_text native_read_bytes = "readBytes"
+native_function_text native_code_points = "codePoints"
+native_function_text native_from_code_points = "fromCodePoints"
 native_function_text native_write_text = "writeText"
 native_function_text native_append_text = "appendText"
 native_function_text native_file_exists = "fileExists"
@@ -176,6 +182,9 @@ native_function_text native_log = "console.log"
 public export
 parse_native_function : Text → Maybe native_function
 parse_native_function "readText" = Just native_read_text
+parse_native_function "readBytes" = Just native_read_bytes
+parse_native_function "codePoints" = Just native_code_points
+parse_native_function "fromCodePoints" = Just native_from_code_points
 parse_native_function "writeText" = Just native_write_text
 parse_native_function "appendText" = Just native_append_text
 parse_native_function "fileExists" = Just native_file_exists

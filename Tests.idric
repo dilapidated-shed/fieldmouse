@@ -3,6 +3,9 @@ module Tests
 import Fieldmouse
 import System
 import Data.Text
+import Data.Buffer
+import System.File
+import System.File.Buffer
 
 fail : Text → IO ()
 fail message = do
@@ -49,6 +52,9 @@ memory_host (read_text_request path) =
     else pure (Left ("memory host has no '" ++ path ++ "'"))
 memory_host (file_exists_request path) =
   pure (Right (boolean_response (path ≟ "virtual")))
+memory_host (read_bytes_request "binary") =
+  pure (Right (bytes_response [0, 65, 255, 128, 10]))
+memory_host (read_bytes_request "empty") = pure (Right (bytes_response []))
 memory_host _ = pure (Left "memory host does not implement this request")
 
 wrong_response_host : Host
@@ -351,6 +357,63 @@ check_function_scope_transitions = do
     "function call depth exceeded 256"
 
 covering
+check_byte_and_unicode_boundaries : IO ()
+check_byte_and_unicode_boundaries = do
+  assert_run "Unicode scalars preserve empty text"
+    "console.log(codePoints(\"\").length, fromCodePoints([]));"
+    ["0.0 "]
+  assert_run "Unicode scalar values are not UTF16 units"
+    "var xs ← codePoints(\"Ağ😀\"); console.log(xs.length, xs[0], xs[1], xs[2]); console.log(fromCodePoints(xs));"
+    ["3.0 65.0 287.0 128512.0", "Ağ😀"]
+  assert_run "NUL and scalar boundaries round trip without host text conversion"
+    "var xs ← codePoints(fromCodePoints([0, 55295, 57344, 1114111])); console.log(xs.length, xs[0], xs[1], xs[2], xs[3]);"
+    ["4.0 0.0 55295.0 57344.0 1114111.0"]
+  assert_rejected "codePoints requires text" "codePoints(7);"
+  assert_failure_message "codePoints keeps arity diagnostics"
+    "codePoints();" "codePoints: expected 1 argument, found 0"
+  assert_rejected "fromCodePoints requires array" "fromCodePoints(65);"
+  assert_rejected "scalar fractions fail" "fromCodePoints([65.5]);"
+  assert_rejected "negative scalars fail" "fromCodePoints([-1]);"
+  assert_rejected "surrogate start fails" "fromCodePoints([55296]);"
+  assert_rejected "surrogate end fails" "fromCodePoints([57343]);"
+  assert_rejected "above Unicode range fails" "fromCodePoints([1114112]);"
+  assert_rejected "nonfinite scalar fails" "fromCodePoints([1 / 0]);"
+  assert_rejected "nonnumeric scalar fails" "fromCodePoints([\"65\"]);"
+  assert_rejected "sparse scalar arrays fail" "var xs ← []; xs[1] ← 65; fromCodePoints(xs);"
+  assert_run_with_host "binary host preserves byte values including invalid UTF8"
+    memory_host
+    "var xs ← readBytes(\"binary\"); console.log(xs.length, xs[0], xs[1], xs[2], xs[3], xs[4]);"
+    ["5.0 0.0 65.0 255.0 128.0 10.0"]
+  assert_run_with_host "binary empty result remains empty" memory_host
+    "console.log(readBytes(\"empty\").length);" ["0.0"]
+  assert_rejected_with_host "binary response type is checked" wrong_response_host
+    "readBytes(\"binary\");"
+  assert_rejected "binary argument must be path text" "readBytes(2);"
+  assert_rejected "binary missing file is an error" "readBytes(\"/nonexistent-fieldmouse-byte-test\");"
+  assert_rejected "binary path NUL is refused" "readBytes(fromCodePoints([0]));"
+
+  process_id ← getPID
+  let path = "/tmp/fieldmouse-byte-test-" ++ show process_id
+  Just buffer ← newBuffer 5 | Nothing ⇒ fail "cannot allocate binary test fixture"
+  setBits8 buffer 0 0
+  setBits8 buffer 1 65
+  setBits8 buffer 2 255
+  setBits8 buffer 3 128
+  setBits8 buffer 4 10
+  Right () ← writeBufferToFile path buffer 5
+    | Left problem ⇒ fail ("cannot write binary test fixture: " ++ show problem)
+  assert_run "actual binary host preserves original bytes"
+    ("var xs ← readBytes(\"" ++ path ++ "\"); console.log(xs.length, xs[0], xs[1], xs[2], xs[3], xs[4]);")
+    ["5.0 0.0 65.0 255.0 128.0 10.0"]
+  Right () ← writeFile path ""
+    | Left problem ⇒ fail ("cannot empty binary test fixture: " ++ show problem)
+  assert_run "actual binary host retains zero-byte files"
+    ("console.log(readBytes(\"" ++ path ++ "\").length);") ["0.0"]
+  Right () ← removeFile path
+    | Left problem ⇒ fail ("cannot remove binary test fixture: " ++ show problem)
+  pure ()
+
+covering
 main : IO ()
 main = do
   check_output_and_construction
@@ -361,4 +424,5 @@ main = do
   check_paths_and_host_responses
   check_rejected_runtime_operations
   check_function_scope_transitions
+  check_byte_and_unicode_boundaries
   putStrLn "Field Mouse language and structured-runtime tests passed"

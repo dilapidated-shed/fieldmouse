@@ -4,6 +4,8 @@ import Data.Text
 import Data.List
 import Data.Maybe
 import System.File
+import System.File.Buffer
+import Data.Buffer
 import System.Directory
 import System
 import Fieldmouse.Host_interface
@@ -14,6 +16,24 @@ import Fieldmouse.Host_interface
 describe_file_operation_failure : Text → Text → FileError → Text
 describe_file_operation_failure operation path problem =
   operation ++ " '" ++ path ++ "': " ++ show problem
+
+read_file_bytes : Text → IO (Either Text (List Bits8))
+read_file_bytes path =
+  withFile path Read
+    (\problem ⇒ pure (describe_file_operation_failure "readBytes" path problem))
+    (\file ⇒ do
+      Right size ← fileSize file
+        | Left problem ⇒ pure (Left (describe_file_operation_failure "readBytes" path problem))
+      Just buffer ← newBuffer size
+        | Nothing ⇒ pure (Left ("readBytes '" ++ path ++ "': cannot allocate file buffer"))
+      Right count ← readBufferData file buffer 0 size
+        | Left problem ⇒ pure (Left (describe_file_operation_failure "readBytes" path problem))
+      -- Reject a short read rather than importing uninitialized buffer bytes.
+      if count /= size
+        then pure (Left ("readBytes '" ++ path ++ "': file changed or short read"))
+        else do
+          bytes ← bufferData' buffer
+          pure (Right bytes))
 export
 execute_system_request : List Text → Host
 execute_system_request arguments (read_text_request path) = do
@@ -21,6 +41,11 @@ execute_system_request arguments (read_text_request path) = do
   pure (case result of
     Left problem ⇒ Left (describe_file_operation_failure "readText" path problem)
     Right text ⇒ Right (text_response text))
+execute_system_request arguments (read_bytes_request path) = do
+  result ← read_file_bytes path
+  pure (case result of
+    Left problem ⇒ Left problem
+    Right bytes ⇒ Right (bytes_response bytes))
 execute_system_request arguments (write_text_request path contents) = do
   result ← writeFile path contents
   pure (case result of
